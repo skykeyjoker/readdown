@@ -10,9 +10,16 @@ final class FindInPageTests: XCTestCase {
 
     // MARK: - Harness
 
-    private func loadDocument(_ markdown: String) -> WKWebView {
+    private func loadDocument(
+        _ markdown: String,
+        palette: ReaderThemePalette? = nil
+    ) -> WKWebView {
         let result = MarkdownRenderer.render(markdown)
-        let html = HTMLTemplate.wrap(body: result.html, hasMermaid: result.hasMermaid)
+        let html = HTMLTemplate.wrap(
+            body: result.html,
+            hasMermaid: result.hasMermaid,
+            palette: palette
+        )
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         webView.loadHTMLString(html, baseURL: nil)
         waitUntilTrue(webView, "typeof window.__rdFind === 'object'")
@@ -264,6 +271,69 @@ final class FindInPageTests: XCTestCase {
         let lineHeight = geometry?["lineHeight"] as? Double ?? .infinity
         XCTAssertGreaterThan(boxHeight, lineHeight * 3,
             "Mermaid did not grow the node for dynamically wrapped lines")
+    }
+
+    func testMermaidFlowchartUsesReaderThemePalette() {
+        let palette = ReaderThemeCatalog.palette(for: .catppuccin, scheme: .light)
+        let webView = loadDocument("""
+        ```mermaid
+        graph TB
+            subgraph Cluster["Synthetic Cluster"]
+                A["Synthetic Node A"] --> B["Synthetic Node B"]
+            end
+        ```
+        """, palette: palette)
+        waitUntilTrue(webView, "document.querySelector('pre.mermaid svg') !== null")
+
+        let styles = evaluate(webView, """
+        (() => {
+            const svg = document.querySelector('pre.mermaid svg');
+            return {
+                nodeFill: getComputedStyle(svg.querySelector('g.node rect')).fill,
+                nodeStroke: getComputedStyle(svg.querySelector('g.node rect')).stroke,
+                clusterFill: getComputedStyle(svg.querySelector('g.cluster rect')).fill,
+                clusterStroke: getComputedStyle(svg.querySelector('g.cluster rect')).stroke,
+                lineStroke: getComputedStyle(svg.querySelector('.flowchart-link')).stroke,
+                nodeText: getComputedStyle(svg.querySelector('.nodeLabel')).color
+            };
+        })()
+        """) as? [String: String]
+
+        XCTAssertEqual(styles?["nodeFill"], "rgb(230, 233, 239)")
+        XCTAssertEqual(styles?["nodeStroke"], "rgb(188, 192, 204)")
+        XCTAssertEqual(styles?["clusterFill"], "rgb(220, 224, 232)")
+        XCTAssertEqual(styles?["clusterStroke"], "rgb(188, 192, 204)")
+        XCTAssertEqual(styles?["lineStroke"], "rgb(108, 111, 133)")
+        XCTAssertEqual(styles?["nodeText"], "rgb(76, 79, 105)")
+    }
+
+    func testMermaidAuthorStylesOverrideReaderThemePalette() {
+        let palette = ReaderThemeCatalog.palette(for: .catppuccin, scheme: .light)
+        let webView = loadDocument("""
+        ```mermaid
+        graph TB
+            A["Author Styled Node"] --> B["Default Node"]
+            style A fill:#123456,stroke:#654321,color:#ffffff
+        ```
+        """, palette: palette)
+        waitUntilTrue(webView, "document.querySelector('pre.mermaid svg') !== null")
+
+        let styles = evaluate(webView, """
+        (() => {
+            const node = Array.from(document.querySelectorAll('pre.mermaid g.node')).find(
+                candidate => candidate.textContent.includes('Author Styled Node')
+            );
+            return {
+                fill: getComputedStyle(node.querySelector('rect')).fill,
+                stroke: getComputedStyle(node.querySelector('rect')).stroke,
+                text: getComputedStyle(node.querySelector('.nodeLabel')).color
+            };
+        })()
+        """) as? [String: String]
+
+        XCTAssertEqual(styles?["fill"], "rgb(18, 52, 86)")
+        XCTAssertEqual(styles?["stroke"], "rgb(101, 67, 33)")
+        XCTAssertEqual(styles?["text"], "rgb(255, 255, 255)")
     }
 
     // MARK: - Print/PDF always renders light (Mermaid dark-on-paper fix)
