@@ -52,6 +52,22 @@ final class HTMLTemplateTests: XCTestCase {
         XCTAssertTrue(result.contains("background: var(--code-bg)"))
     }
 
+    func testInjectsIndependentTypographyVariables() {
+        let typography = ReaderTypography(
+            ui: ReaderFontSelection(family: "Helvetica Neue", weight: .medium, size: 14),
+            body: ReaderFontSelection(family: "Avenir Next", weight: .regular, size: 18),
+            code: ReaderFontSelection(family: "Menlo", weight: .semibold, size: 15)
+        )
+        let result = HTMLTemplate.wrap(body: "<p>Body</p><code>Code</code>", typography: typography)
+        XCTAssertTrue(result.contains("--ui-font-size: 14px"))
+        XCTAssertTrue(result.contains("--body-font-family: \"Avenir Next\""))
+        XCTAssertTrue(result.contains("--body-font-size: 18px"))
+        XCTAssertTrue(result.contains("--code-font-family: \"Menlo\""))
+        XCTAssertTrue(result.contains("--code-font-weight: 600"))
+        XCTAssertTrue(result.contains("font-family: var(--body-font-family)"))
+        XCTAssertTrue(result.contains("font-family: var(--code-font-family)"))
+    }
+
     // MARK: - Header blur (main app only)
 
     func testHeaderBlurPresentInMainApp() {

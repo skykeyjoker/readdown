@@ -336,6 +336,7 @@ struct CheckForUpdatesView: View {
 struct ReadDownApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var themePreferences = ThemePreferences.shared
+    @StateObject private var typographyPreferences = TypographyPreferences.shared
     @AppStorage(UsageMetrics.consentKey) private var shareUsageData = false
     var body: some Scene {
         DocumentGroup(viewing: MarkdownDocument.self) { file in
@@ -452,7 +453,14 @@ struct ReadDownApp: App {
         }
 
         Settings {
-            ThemeSettingsView(preferences: themePreferences)
+            TabView {
+                ThemeSettingsView(preferences: themePreferences)
+                    .tabItem { Label("Themes", systemImage: "paintpalette") }
+                TypographySettingsView(preferences: typographyPreferences)
+                    .tabItem { Label("Typography", systemImage: "textformat") }
+            }
+            .font(typographyPreferences.typography.ui.swiftUIFont)
+            .frame(width: 560, height: 460)
         }
     }
 

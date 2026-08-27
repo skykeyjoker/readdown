@@ -27,7 +27,8 @@ enum HTMLTemplate {
 
     static func wrap(body: String, hasMermaid: Bool = false, hasMath: Bool = false,
                      compact: Bool = false, isDark: Bool = false,
-                     palette customPalette: ReaderThemePalette? = nil) -> String {
+                     palette customPalette: ReaderThemePalette? = nil,
+                     typography: ReaderTypography = .default) -> String {
         let palette = customPalette ?? ReaderThemeCatalog.palette(
             for: .default,
             scheme: isDark ? .dark : .light
@@ -93,8 +94,9 @@ enum HTMLTemplate {
             min-height: 42px;
             padding: 6px 8px 6px 14px;
             border-bottom: 1px solid var(--hairline);
-            font-size: 12px;
-            font-weight: 600;
+            font-family: var(--ui-font-family);
+            font-size: var(--ui-font-size);
+            font-weight: var(--ui-font-weight);
             letter-spacing: 0.02em;
             color: var(--muted);
             -webkit-user-select: none;
@@ -133,7 +135,9 @@ enum HTMLTemplate {
             padding-bottom: 5px;
             border-radius: 6px;
             color: var(--muted);
-            font-size: 12px;
+            font-family: var(--ui-font-family);
+            font-size: var(--ui-font-size);
+            font-weight: var(--ui-font-weight);
             line-height: 1.35;
             text-decoration: none;
             text-overflow: ellipsis;
@@ -179,6 +183,7 @@ enum HTMLTemplate {
         :root {
             color-scheme: \(rendersDark ? "dark" : "light");
             \(palette.cssVariables)
+            \(typography.cssVariables)
         }
 
         * {
@@ -193,9 +198,9 @@ enum HTMLTemplate {
         \(tableOfContentsCSS)
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-                         "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji";
-            font-size: \(fontSize);
+            font-family: var(--body-font-family), "Apple Color Emoji";
+            font-size: \(compact ? fontSize : "var(--body-font-size)");
+            font-weight: var(--body-font-weight);
             line-height: 1.6;
             color: var(--text);
             background: var(--bg);
@@ -278,8 +283,9 @@ enum HTMLTemplate {
         }
 
         code {
-            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-            font-size: 0.875em;
+            font-family: var(--code-font-family);
+            font-size: var(--code-font-size);
+            font-weight: var(--code-font-weight);
             padding: 0.15em 0.35em;
             background: var(--code-bg);
             border-radius: 4px;
@@ -288,7 +294,9 @@ enum HTMLTemplate {
         pre {
             padding: 16px 20px;
             overflow: auto;
-            font-size: 0.875em;
+            font-family: var(--code-font-family);
+            font-size: var(--code-font-size);
+            font-weight: var(--code-font-weight);
             line-height: 1.55;
             background: var(--code-bg);
             border-radius: 8px;

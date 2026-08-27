@@ -54,6 +54,7 @@ final class TableOfContentsState: ObservableObject {
 struct ContentView: View {
     @StateObject private var watcher: DocumentWatcher
     @ObservedObject private var themePreferences = ThemePreferences.shared
+    @ObservedObject private var typographyPreferences = TypographyPreferences.shared
     @Environment(\.colorScheme) private var colorScheme
     let baseURL: URL?
     let fileURL: URL?
@@ -72,11 +73,16 @@ struct ContentView: View {
         let provider: (Bool) -> ReaderThemePalette = { systemIsDark in
             ThemePreferences.shared.palette(systemIsDark: systemIsDark)
         }
+        let typographyProvider: () -> ReaderTypography = {
+            TypographyPreferences.shared.typography
+        }
         _watcher = StateObject(wrappedValue: DocumentWatcher(
             initialText: document.text,
             fileURL: fileURL,
             initialPalette: provider(isDark),
-            themeProvider: provider
+            themeProvider: provider,
+            initialTypography: typographyProvider(),
+            typographyProvider: typographyProvider
         ))
         self.baseURL = baseURL
         self.fileURL = fileURL
@@ -123,6 +129,7 @@ struct ContentView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .font(typographyPreferences.typography.ui.swiftUIFont)
         .onReceive(NotificationCenter.default.publisher(for: .findInDocument)) { _ in
             // Only the key window responds. `isKeyWindow` is more reliable than
             // comparing against `NSApp.keyWindow` when SwiftUI re-wraps windows.
@@ -150,7 +157,7 @@ struct ContentView: View {
     /// clicks fall through to the drag strip.
     private var titlePill: some View {
         Text(fileURL?.lastPathComponent ?? "Untitled")
-            .font(.system(size: 13, weight: .semibold))
+            .font(typographyPreferences.typography.ui.swiftUIFont)
             .lineLimit(1)
             .truncationMode(.middle)
             .padding(.horizontal, 14)

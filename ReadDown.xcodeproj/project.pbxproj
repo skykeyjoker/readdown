@@ -21,8 +21,10 @@
 		A100000000000000000010 /* UsageMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000010 /* UsageMetrics.swift */; };
 		A100000000000000000011 /* ThanksPop.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000011 /* ThanksPop.swift */; };
 		A100000000000000000012 /* ThemeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000012 /* ThemeSettings.swift */; };
+		A100000000000000000013 /* TypographySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000013 /* TypographySettings.swift */; };
 		A200000000000000000007 /* SyntaxHighlight.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000C /* SyntaxHighlight.swift */; };
 		A200000000000000000012 /* ThemeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000012 /* ThemeSettings.swift */; };
+		A200000000000000000013 /* TypographySettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000013 /* TypographySettings.swift */; };
 		A100000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000009 /* Assets.xcassets */; };
 		A200000000000000000001 /* PreviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000000000000000001 /* PreviewViewController.swift */; };
 		A200000000000000000002 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000005 /* MarkdownRenderer.swift */; };
@@ -38,6 +40,7 @@
 		A300000000000000000006 /* UsageMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B300000000000000000006 /* UsageMetricsTests.swift */; };
 		A300000000000000000007 /* LinkPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B300000000000000000007 /* LinkPolicyTests.swift */; };
 		A300000000000000000008 /* ThemeSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B300000000000000000008 /* ThemeSettingsTests.swift */; };
+		A300000000000000000009 /* TypographySettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B300000000000000000009 /* TypographySettingsTests.swift */; };
 		A10000000000000000000D /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = P200000000000000000001 /* Sparkle */; };
 		A10000000000000000000E /* mermaid.min.js in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000D /* mermaid.min.js */; };
 		A200000000000000000008 /* mermaid.min.js in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000D /* mermaid.min.js */; };
@@ -93,6 +96,7 @@
 		B100000000000000000010 /* UsageMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetrics.swift; sourceTree = "<group>"; };
 		B100000000000000000011 /* ThanksPop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThanksPop.swift; sourceTree = "<group>"; };
 		B100000000000000000012 /* ThemeSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSettings.swift; sourceTree = "<group>"; };
+		B100000000000000000013 /* TypographySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypographySettings.swift; sourceTree = "<group>"; };
 		B100000000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B100000000000000000008 /* ReadDown.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ReadDown.entitlements; sourceTree = "<group>"; };
 		B100000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -113,6 +117,7 @@
 		B300000000000000000006 /* UsageMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetricsTests.swift; sourceTree = "<group>"; };
 		B300000000000000000007 /* LinkPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkPolicyTests.swift; sourceTree = "<group>"; };
 		B300000000000000000008 /* ThemeSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSettingsTests.swift; sourceTree = "<group>"; };
+		B300000000000000000009 /* TypographySettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypographySettingsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -168,6 +173,7 @@
 				B100000000000000000010 /* UsageMetrics.swift */,
 				B100000000000000000011 /* ThanksPop.swift */,
 				B100000000000000000012 /* ThemeSettings.swift */,
+				B100000000000000000013 /* TypographySettings.swift */,
 				B10000000000000000000D /* mermaid.min.js */,
 				B100000000000000000102 /* katex.min.js */,
 				B100000000000000000103 /* katex.min.css */,
@@ -199,6 +205,7 @@
 				B300000000000000000006 /* UsageMetricsTests.swift */,
 				B300000000000000000007 /* LinkPolicyTests.swift */,
 				B300000000000000000008 /* ThemeSettingsTests.swift */,
+				B300000000000000000009 /* TypographySettingsTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -392,6 +399,7 @@
 				A100000000000000000010 /* UsageMetrics.swift in Sources */,
 				A100000000000000000011 /* ThanksPop.swift in Sources */,
 				A100000000000000000012 /* ThemeSettings.swift in Sources */,
+				A100000000000000000013 /* TypographySettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -405,6 +413,7 @@
 				A200000000000000000005 /* TextFileDecoder.swift in Sources */,
 				A200000000000000000007 /* SyntaxHighlight.swift in Sources */,
 				A200000000000000000012 /* ThemeSettings.swift in Sources */,
+				A200000000000000000013 /* TypographySettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -420,6 +429,7 @@
 				A300000000000000000006 /* UsageMetricsTests.swift in Sources */,
 				A300000000000000000007 /* LinkPolicyTests.swift in Sources */,
 				A300000000000000000008 /* ThemeSettingsTests.swift in Sources */,
+				A300000000000000000009 /* TypographySettingsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

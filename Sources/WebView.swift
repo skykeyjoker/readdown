@@ -526,7 +526,8 @@ private final class PrintRenderer: NSObject, WKNavigationDelegate {
         let html = HTMLTemplate.wrap(
             body: result.html,
             hasMermaid: result.hasMermaid,
-            palette: ThemePreferences.shared.palette(for: .light)
+            palette: ThemePreferences.shared.palette(for: .light),
+            typography: TypographyPreferences.shared.typography
         )
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: max(width, 320), height: 10))
         // Printing always uses the user's selected light palette; forcing Aqua
