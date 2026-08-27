@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Skip the launch sequence when hosting the test runner.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
+        ThemePreferences.shared.applyApplicationAppearance()
         resetQuickLook()
         _ = checkForUpdatesViewModel // force lazy init
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -334,6 +335,7 @@ struct CheckForUpdatesView: View {
 @main
 struct ReadDownApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var themePreferences = ThemePreferences.shared
     @AppStorage(UsageMetrics.consentKey) private var shareUsageData = false
     var body: some Scene {
         DocumentGroup(viewing: MarkdownDocument.self) { file in
@@ -447,6 +449,10 @@ struct ReadDownApp: App {
                     }
                 ))
             }
+        }
+
+        Settings {
+            ThemeSettingsView(preferences: themePreferences)
         }
     }
 

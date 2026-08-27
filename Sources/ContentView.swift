@@ -6,12 +6,16 @@ extension NSAppearance {
 
 /// Colors and metrics for the reader chrome. Values track `HTMLTemplate.swift`.
 enum ReaderTheme {
+    static var activePalette: ReaderThemePalette {
+        ThemePreferences.shared.palette(systemIsDark: NSApp.effectiveAppearance.isDark)
+    }
+
     /// Matches the page `--bg`, so chrome reads as one surface with the document.
-    static let pageBackground = dynamic(light: (0xFC, 0xFC, 0xFB), dark: (0x0D, 0x11, 0x17))
-    static let pill = Color(nsColor: dynamic(light: (0xFF, 0xFF, 0xFF), dark: (0x16, 0x1B, 0x22)))
+    static var pageBackground: NSColor { activePalette.background.nsColor }
+    static var pill: Color { activePalette.surface.color }
     /// Matches the code-block copy button's confirmed state.
-    static let copyConfirm = Color(nsColor: dynamic(light: (0x1A, 0x7F, 0x37), dark: (0x3F, 0xB9, 0x50)))
-    static let hairline = Color.primary.opacity(0.08)
+    static var copyConfirm: Color { activePalette.green.color }
+    static var hairline: Color { activePalette.text.color.opacity(0.08) }
 
     static let headerTopPadding: CGFloat = 6
     static let headerPillHeight: CGFloat = 34
@@ -21,17 +25,6 @@ enum ReaderTheme {
     static let headerLeadingClearance: CGFloat = 76
     static let headerEdgePadding: CGFloat = 12
 
-    private static func dynamic(light: (Int, Int, Int), dark: (Int, Int, Int)) -> NSColor {
-        NSColor(name: nil) { appearance in
-            let rgb = appearance.isDark ? dark : light
-            return NSColor(
-                srgbRed: CGFloat(rgb.0) / 255,
-                green: CGFloat(rgb.1) / 255,
-                blue: CGFloat(rgb.2) / 255,
-                alpha: 1
-            )
-        }
-    }
 }
 
 extension View {
@@ -60,6 +53,8 @@ final class TableOfContentsState: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var watcher: DocumentWatcher
+    @ObservedObject private var themePreferences = ThemePreferences.shared
+    @Environment(\.colorScheme) private var colorScheme
     let baseURL: URL?
     let fileURL: URL?
     @StateObject private var findState = FindState()
@@ -74,7 +69,15 @@ struct ContentView: View {
         // signals (`matchMedia`, `getComputedStyle` of var()-resolved colors)
         // are unreliable, so the source of truth is Swift's `NSAppearance`.
         let isDark = NSApp.effectiveAppearance.isDark
-        _watcher = StateObject(wrappedValue: DocumentWatcher(initialText: document.text, fileURL: fileURL, isDark: isDark))
+        let provider: (Bool) -> ReaderThemePalette = { systemIsDark in
+            ThemePreferences.shared.palette(systemIsDark: systemIsDark)
+        }
+        _watcher = StateObject(wrappedValue: DocumentWatcher(
+            initialText: document.text,
+            fileURL: fileURL,
+            initialPalette: provider(isDark),
+            themeProvider: provider
+        ))
         self.baseURL = baseURL
         self.fileURL = fileURL
     }
@@ -134,6 +137,12 @@ struct ContentView: View {
             if watcher.lastChangeSource == .disk {
                 showPill("Updated")
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .readerThemeDidChange)) { _ in
+            window?.backgroundColor = ReaderTheme.pageBackground
+        }
+        .onChange(of: colorScheme) { _ in
+            window?.backgroundColor = ReaderTheme.pageBackground
         }
     }
 

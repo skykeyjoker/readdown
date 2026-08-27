@@ -523,11 +523,14 @@ private final class PrintRenderer: NSObject, WKNavigationDelegate {
         let result = MarkdownRenderer.render(text)
         hasMermaid = result.hasMermaid
         self.completion = completion
-        let html = HTMLTemplate.wrap(body: result.html, hasMermaid: result.hasMermaid, isDark: false)
+        let html = HTMLTemplate.wrap(
+            body: result.html,
+            hasMermaid: result.hasMermaid,
+            palette: ThemePreferences.shared.palette(for: .light)
+        )
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: max(width, 320), height: 10))
-        // Force light appearance so the page CSS `prefers-color-scheme` also
-        // resolves light — `isDark: false` only covers Mermaid and the theme
-        // attribute, not the media-query palette.
+        // Printing always uses the user's selected light palette; forcing Aqua
+        // keeps native form controls and WebKit's built-in painting light too.
         webView.appearance = NSAppearance(named: .aqua)
         webView.underPageBackgroundColor = .white
         super.init()
