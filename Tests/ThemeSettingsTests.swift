@@ -26,6 +26,19 @@ final class ThemeSettingsTests: XCTestCase {
         XCTAssertEqual(preferences.darkTheme, .default)
     }
 
+    func testMigratesUpstreamAppearancePreferenceWhenForkPreferenceIsAbsent() {
+        for (legacy, expected) in [
+            ("system", ReaderAppearanceMode.automatic),
+            ("light", .light),
+            ("dark", .dark)
+        ] {
+            store.removeObject(forKey: ThemePreferences.appearanceKey)
+            store.set(legacy, forKey: ThemePreferences.legacyAppearanceKey)
+            let preferences = ThemePreferences(store: store, appliesApplicationAppearance: false)
+            XCTAssertEqual(preferences.appearanceMode, expected)
+        }
+    }
+
     func testPersistsLightAndDarkSelectionsIndependently() {
         let preferences = ThemePreferences(store: store, appliesApplicationAppearance: false)
         preferences.appearanceMode = .dark

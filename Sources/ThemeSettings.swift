@@ -303,6 +303,7 @@ final class ThemePreferences: ObservableObject {
     static let shared = ThemePreferences()
 
     static let appearanceKey = "readerAppearanceMode"
+    static let legacyAppearanceKey = "appearanceMode"
     static let lightThemeKey = "readerLightTheme"
     static let darkThemeKey = "readerDarkTheme"
 
@@ -336,15 +337,24 @@ final class ThemePreferences: ObservableObject {
     init(store: UserDefaults = .standard, appliesApplicationAppearance: Bool = true) {
         self.store = store
         self.appliesApplicationAppearance = appliesApplicationAppearance
-        appearanceMode = ReaderAppearanceMode(
-            rawValue: store.string(forKey: Self.appearanceKey) ?? ""
-        ) ?? .automatic
+        let storedAppearance = store.string(forKey: Self.appearanceKey)
+            ?? Self.migratedAppearance(from: store.string(forKey: Self.legacyAppearanceKey))
+        appearanceMode = ReaderAppearanceMode(rawValue: storedAppearance ?? "") ?? .automatic
         lightTheme = ReaderThemeFamily(
             rawValue: store.string(forKey: Self.lightThemeKey) ?? ""
         ) ?? .default
         darkTheme = ReaderThemeFamily(
             rawValue: store.string(forKey: Self.darkThemeKey) ?? ""
         ) ?? .default
+    }
+
+    private static func migratedAppearance(from legacyValue: String?) -> String? {
+        switch legacyValue {
+        case "system": return ReaderAppearanceMode.automatic.rawValue
+        case "light": return ReaderAppearanceMode.light.rawValue
+        case "dark": return ReaderAppearanceMode.dark.rawValue
+        default: return nil
+        }
     }
 
     func resolvedScheme(systemIsDark: Bool) -> ReaderColorScheme {

@@ -13,58 +13,40 @@ private let linkPattern = try! NSRegularExpression(pattern: "\\[([^\\]]*)\\]\\((
 private let autolinkURLPattern = try! NSRegularExpression(pattern: "<(https?://[^\\s<>]+)>")
 private let autolinkEmailPattern = try! NSRegularExpression(pattern: "<([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})>")
 private let codePattern = try! NSRegularExpression(pattern: "`([^`]+)`")
-// Backslash escape: `\` + ASCII punctuation → literal (CommonMark §2.4). `$` excluded
-// (escaped dollars are handled by the math pass).
+// `$` is excluded: escaped dollars belong to the math pass.
 private let backslashEscapePattern = try! NSRegularExpression(pattern: "\\\\([!-#%-/:-@\\[-`{-~])")
 private let boldItalicStarPattern = try! NSRegularExpression(pattern: "\\*\\*\\*(.+?)\\*\\*\\*", options: .dotMatchesLineSeparators)
 private let boldStarPattern = try! NSRegularExpression(pattern: "\\*\\*(.+?)\\*\\*", options: .dotMatchesLineSeparators)
 private let italicStarPattern = try! NSRegularExpression(pattern: "\\*(.+?)\\*", options: .dotMatchesLineSeparators)
-// Underscore variants require *word-boundary flanking* per CommonMark §6.2 —
-// `_` adjacent to a letter, digit, or another `_` on either side is a literal
-// underscore, not an emphasis delimiter. This keeps `snake_case`,
-// `lots_of_underscores`, `some__double__underscores`, and the like rendering
-// as plain text. The lookbehind/lookahead use Unicode letter (`\p{L}`) and
-// number (`\p{N}`), plus `_` itself so an italic `_x_` can't sneak in between
-// the two `__` of a bold run mid-word. (`*` emphasis is asymmetric and CAN
-// flank inside words per CommonMark, so the star patterns above stay
-// unchanged.)
+// Underscore emphasis needs word-boundary flanking (CommonMark §6.2) so `snake_case` stays literal; `*` may flank inside words.
 private let boldItalicUnderPattern = try! NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}_])___(.+?)___(?![\\p{L}\\p{N}_])", options: .dotMatchesLineSeparators)
 private let boldUnderPattern = try! NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}_])__(.+?)__(?![\\p{L}\\p{N}_])", options: .dotMatchesLineSeparators)
 private let italicUnderPattern = try! NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}_])_(.+?)_(?![\\p{L}\\p{N}_])", options: .dotMatchesLineSeparators)
 private let strikePattern = try! NSRegularExpression(pattern: "~~(.+?)~~", options: .dotMatchesLineSeparators)
-// Inline TeX math. `$…$` requires non-space flanking and a non-digit after the
-// closing `$`, so prose like "it cost $5 and $7 today" isn't mis-parsed as a
-// math span. `\(…\)` is the unambiguous LaTeX inline delimiter. Display math
-// (`$$…$$`, `\[…\]`) is block-level and handled directly in `render`. The raw
-// TeX is stashed verbatim and emitted into `<span class="rd-math …">` elements
-// that the bundled math renderer typesets in the WebView — so no later inline
-// pass (escape, emphasis, link, …) can corrupt the source.
+// `$…$` needs non-space flanking and no digit after the closer, so "$5 and $7" stays prose.
 private let inlineMathDollarPattern = try! NSRegularExpression(pattern: "(?<![\\\\$])\\$(?!\\d)(?=\\S)([^\\n$]*?[^\\s$])\\$(?![0-9$])")
 private let inlineMathParenPattern = try! NSRegularExpression(pattern: "\\\\\\((.+?)\\\\\\)")
 private let htmlTagPattern = try! NSRegularExpression(pattern: "<!--[\\s\\S]*?-->|</?[a-zA-Z][a-zA-Z0-9]*(?:\\s+[^>]*)?\\/?>")
-// Scans a tag's attributes as (name, value?) tokens; only allowlisted names survive,
-// so any `on*` handler (with or without leading space) is dropped.
+// Only allowlisted attribute names survive the scan, so any `on*` handler is dropped.
 private let attrScanPattern = try! NSRegularExpression(pattern: "([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s\"'`=<>]+))?")
 private let htmlEntityPattern = try! NSRegularExpression(pattern: "&(?:[a-zA-Z][a-zA-Z0-9]{0,31}|#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6});")
 
-// Reference-link definition: `[label]: url "title"` (title optional; `"…"`, `'…'`, or `(…)`).
 private let refDefPattern = try! NSRegularExpression(pattern: "^\\s{0,3}\\[([^\\]]+)\\]:\\s*(\\S+)(?:\\s+(?:\"([^\"]*)\"|'([^']*)'|\\(([^)]*)\\)))?\\s*$")
-// Full / collapsed reference link: `[text][ref]` / `[text][]`, but not an image (`![…]`).
 private let fullRefPattern = try! NSRegularExpression(pattern: "(?<!!)\\[([^\\]]*)\\]\\[([^\\]]*)\\]")
-// Shortcut reference link: `[ref]`, not preceded by `!`/`]` nor followed by `[`/`(`.
 private let shortcutRefPattern = try! NSRegularExpression(pattern: "(?<![!\\]])\\[([^\\]]+)\\](?![\\[(])")
-// Full / collapsed reference image: `![alt][ref]` / `![alt][]`.
 private let fullRefImagePattern = try! NSRegularExpression(pattern: "!\\[([^\\]]*)\\]\\[([^\\]]*)\\]")
-// Shortcut reference image: `![alt]`, not followed by `[`/`(` (an inline image or full ref).
 private let shortcutRefImagePattern = try! NSRegularExpression(pattern: "!\\[([^\\]]+)\\](?![\\[(])")
-// GFM bare-URL autolink candidate. Trailing sentence punctuation is trimmed in code.
+// Deliberately greedy; trailing punctuation is trimmed in code.
 private let bareURLPattern = try! NSRegularExpression(pattern: "https?://[^\\s<>]+")
+
+private let slugTagPattern = try! NSRegularExpression(pattern: "<[^>]+>")
+private let slugStripPattern = try! NSRegularExpression(pattern: "[^\\p{L}\\p{N}\\-_\\s]")
+private let slugSpacePattern = try! NSRegularExpression(pattern: "\\s")
 
 /// Reference-link definitions, keyed by lowercased label.
 private typealias RefDefs = [String: (url: String, title: String?)]
 
-/// HTML sanitization is an allowlist: `safeTags` pass (keeping only `safeAttributes`),
-/// everything else is escaped to text. Fail-safe — unknowns are neutralized, not emitted.
+/// Allowlist: any tag or attribute not listed is escaped to text, never emitted.
 private let safeTags: Set<String> = [
     "a", "abbr", "address", "article", "aside", "b", "bdi", "bdo", "blockquote",
     "br", "caption", "center", "cite", "code", "col", "colgroup", "dd", "del",
@@ -96,67 +78,40 @@ enum MarkdownRenderer {
 
     static func render(_ markdown: String) -> Result {
         var lines = markdown.components(separatedBy: "\n")
-        // Harvest `[label]: url` definitions (fence-aware) and blank those lines
-        // before block parsing, so a reference can be defined anywhere.
-        let refs = collectReferenceDefinitions(&lines)
         var html: [String] = []
+        // Peeled off before reference harvesting so nothing inside it is read as a definition.
+        if let end = frontMatterEnd(lines) {
+            let yaml = lines[1..<end].map(escapeHTML).joined(separator: "\n")
+            html.append("<pre><code class=\"language-yaml\">\(yaml)</code></pre>")
+            lines.removeFirst(end + 1)
+        }
+        let refs = collectReferenceDefinitions(&lines)
         var hasMermaid = false
         var i = 0
-        // GitHub-style anchor slugs for heading IDs. Tracks duplicate counts so
-        // `# Intro` and a later `# Intro` produce `intro` and `intro-1`.
         var headingSlugs: [String: Int] = [:]
 
         while i < lines.count {
             let line = lines[i]
-            // Sentinel for the defensive no-advance guard at the bottom of this
-            // loop — every branch below MUST move `i` forward. See issue #8.
+            // Every branch below must advance `i`; the guard at the bottom catches one that doesn't.
             let iAtStart = i
 
-            // Fenced code block (allow up to 3 leading spaces)
             if line.matchesPattern(fencePattern) {
-                let stripped = line.drop(while: { $0 == " " || $0 == "\t" })
-                let fenceChar: Character = stripped.first == "~" ? "~" : "`"
-                let fenceLen = stripped.prefix(while: { $0 == fenceChar }).count
-                let lang = String(stripped.dropFirst(fenceLen)).trimmingCharacters(in: .whitespaces)
-                let isMermaid = lang.lowercased() == "mermaid"
-                var code: [String] = []
-                i += 1
-                while i < lines.count {
-                    let closeTrimmed = lines[i].drop(while: { $0 == " " || $0 == "\t" })
-                    let closeLen = closeTrimmed.prefix(while: { $0 == fenceChar }).count
-                    if closeLen >= fenceLen
-                        && closeTrimmed.dropFirst(closeLen).allSatisfy({ $0.isWhitespace }) {
-                        i += 1
-                        break
-                    }
-                    code.append(isMermaid ? lines[i] : escapeHTML(lines[i]))
-                    i += 1
-                }
-                if isMermaid {
-                    hasMermaid = true
-                    html.append("<pre class=\"mermaid\">\(code.joined(separator: "\n"))</pre>")
-                } else {
-                    let langAttr = lang.isEmpty ? "" : " class=\"language-\(escapeHTML(lang))\""
-                    html.append("<pre><code\(langAttr)>\(code.joined(separator: "\n"))</code></pre>")
-                }
+                let openerIndent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+                html.append(consumeFence(&i, lines: lines, openerIndent: openerIndent, hasMermaid: &hasMermaid))
                 continue
             }
 
-            // Display math block — `$$ … $$` or `\[ … \]`, single- or multi-line.
-            // Checked after fenced code (so a code block containing `$$` stays
-            // literal) and before the paragraph collector.
+            // After fenced code, so a `$$` inside a code block stays literal.
             if let mathHTML = parseDisplayMath(&i, lines: lines) {
                 if !mathHTML.isEmpty { html.append(mathHTML) }
                 continue
             }
 
-            // Blank line
             if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 i += 1
                 continue
             }
 
-            // Horizontal rule — only lines with 3+ of the same marker and nothing else
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if isHorizontalRule(trimmed) {
                 html.append("<hr>")
@@ -164,7 +119,6 @@ enum MarkdownRenderer {
                 continue
             }
 
-            // Heading
             if line.matchesPattern(headingPattern) {
                 let trimmedLine = String(line.drop(while: { $0 == " " || $0 == "\t" }))
                 let level = min(trimmedLine.prefix(while: { $0 == "#" }).count, 6)
@@ -175,7 +129,6 @@ enum MarkdownRenderer {
                 continue
             }
 
-            // Table
             if line.contains("|") && i + 1 < lines.count
                 && lines[i + 1].matchesPattern(tableSepPattern) {
                 let headerCells = parseTableRow(line)
@@ -219,7 +172,6 @@ enum MarkdownRenderer {
                 continue
             }
 
-            // Blockquote
             if line.hasPrefix(">") {
                 var quoteLines: [String] = []
                 while i < lines.count && lines[i].hasPrefix(">") {
@@ -234,15 +186,11 @@ enum MarkdownRenderer {
                 continue
             }
 
-            // Lists — ordered, unordered, and task lists all go through one
-            // indented parser so nesting, mixed marker types, and loose items
-            // behave uniformly.
             if line.matchesPattern(ulPattern) || line.matchesPattern(olPattern) {
                 html.append(parseList(&i, lines: lines, baseIndent: listItemIndent(line), hasMermaid: &hasMermaid, refs: refs))
                 continue
             }
 
-            // HTML block — pass through raw
             if isHTMLBlockStart(line) {
                 var blockLines: [String] = []
                 while i < lines.count {
@@ -254,24 +202,18 @@ enum MarkdownRenderer {
                     blockLines.append(l)
                     i += 1
                 }
-                // Sanitize the whole block as one string so raw-text opacity
-                // (e.g. a multi-line `<script>…</script>`) is tracked across lines.
+                // One string, so a multi-line `<script>…</script>` is tracked across lines.
                 html.append(escapeHTMLPreservingTags(blockLines.joined(separator: "\n")))
                 continue
             }
 
-            // Paragraph — collect contiguous non-blank, non-special lines.
-            // The heading check must mirror `headingPattern` exactly (`#` + space
-            // or end-of-line): a bare `hasPrefix("#")` rejects lines like `#24`
-            // which the heading branch above also (rightly) rejects, leaving the
-            // paragraph branch unable to claim them and `i` stuck — an infinite
-            // loop (issue #8).
+            // Every stop test must mirror the main loop's: a looser one (bare `hasPrefix`) leaves a line unclaimed and `i` stuck (issue #8).
             var para: [String] = []
             while i < lines.count {
                 let l = lines[i]
                 let t = l.trimmingCharacters(in: .whitespaces)
                 if t.isEmpty || l.matchesPattern(headingPattern) || l.hasPrefix(">")
-                    || t.hasPrefix("```") || t.hasPrefix("~~~")
+                    || l.matchesPattern(fencePattern)
                     || l.matchesPattern(ulPattern) || l.matchesPattern(olPattern)
                     || isDisplayMathOpener(l) || isHTMLBlockStart(l) {
                     break
@@ -283,11 +225,7 @@ enum MarkdownRenderer {
                 if isHorizontalRule(t) {
                     break
                 }
-                // Setext heading: this paragraph line is underlined by `===`
-                // (h1) or `---` (h2). The underline converts only this one line,
-                // so flush any earlier collected lines as their own paragraph
-                // first. A `---` with no preceding text is an <hr> (handled by
-                // the branch above), so reaching here means a real heading.
+                // A setext underline converts only this line; earlier lines flush as their own paragraph.
                 if i + 1 < lines.count, let level = setextUnderline(lines[i + 1]) {
                     if !para.isEmpty {
                         html.append("<p>\(inlineMarkdown(para.joined(separator: "\n"), refs: refs))</p>")
@@ -305,20 +243,14 @@ enum MarkdownRenderer {
                 html.append("<p>\(inlineMarkdown(para.joined(separator: "\n"), refs: refs))</p>")
             }
 
-            // Belt-and-braces: if every branch above somehow declined this line
-            // without advancing `i`, force-advance so the renderer can never
-            // hang the app. The targeted heading-check fix above closes the
-            // known case (issue #8); this guard catches any future regression.
+            // No branch may leave `i` unmoved; a stuck line hangs the app (issue #8).
             if i == iAtStart {
                 i += 1
             }
         }
 
         let joined = html.joined(separator: "\n")
-        // Inline math is stashed deep inside `inlineMarkdown` (which only returns a
-        // String), and display math nested in blockquotes bubbles up through the
-        // recursive `render`. Scanning the assembled HTML for the `rd-math` marker
-        // catches both without threading a flag through every call site.
+        // Inline math is stashed inside `inlineMarkdown` and blockquote math comes through the recursive render; scanning the HTML catches both.
         let hasMath = joined.contains("class=\"rd-math")
         return Result(html: joined, hasMath: hasMath, hasMermaid: hasMermaid)
     }
@@ -331,7 +263,6 @@ enum MarkdownRenderer {
         if matches.isEmpty { return escapeHTMLKeepingEntities(text) }
         var result = ""
         var lastEnd = 0
-        // Inside a raw-text element (script/style/…), escape everything up to its close tag.
         var rawText: String?
         for match in matches {
             let r = match.range
@@ -353,8 +284,7 @@ enum MarkdownRenderer {
         return result
     }
 
-    /// The lowercased tag name and whether it's a closing tag. `("", false)` for
-    /// comments and anything that isn't a well-formed tag.
+    /// `("", false)` for comments and anything that isn't a well-formed tag.
     private static func htmlTagName(_ tag: String) -> (name: String, isClosing: Bool) {
         var s = Substring(tag)
         guard s.first == "<" else { return ("", false) }
@@ -364,9 +294,9 @@ enum MarkdownRenderer {
         return (String(s.prefix(while: { $0.isLetter || $0.isNumber })).lowercased(), isClosing)
     }
 
-    /// Re-emits a safe tag keeping only allowlisted attributes; escapes any other tag.
+    /// Escapes, rather than drops, any tag outside the allowlist.
     private static func sanitizeHTMLTag(_ tag: String) -> String {
-        // Comments matched the full `<!-- … -->` pattern already; they're inert.
+        // Comments are inert.
         if tag.hasPrefix("<!--") { return tag }
         var s = Substring(tag)
         guard s.first == "<" else { return escapeHTML(tag) }
@@ -377,7 +307,6 @@ enum MarkdownRenderer {
         guard !name.isEmpty, safeTags.contains(name) else { return escapeHTML(tag) }
         if isClosing { return "</\(name)>" }
 
-        // Opening / self-closing tag: keep only allowlisted attributes.
         let selfClosing = tag.hasSuffix("/>")
         var body = String(s.dropFirst(name.count))
         if body.hasSuffix(">") { body.removeLast() }
@@ -387,22 +316,22 @@ enum MarkdownRenderer {
         for m in attrScanPattern.matches(in: body, range: NSRange(location: 0, length: bns.length)) {
             let attrName = bns.substring(with: m.range(at: 1)).lowercased()
             guard safeAttributes.contains(attrName) else { continue }
-            // Drop href/src carrying a dangerous scheme (defense in depth; the
-            // WebView also refuses the navigation on click).
+            // Defense in depth: the WebView also refuses these schemes on click.
             if (attrName == "href" || attrName == "src"), m.range(at: 2).location != NSNotFound {
                 var value = bns.substring(with: m.range(at: 2))
                 if value.count >= 2, let q = value.first, q == "\"" || q == "'", value.last == q {
                     value = String(value.dropFirst().dropLast())
                 }
-                if !isSafeURL(value) { continue }
+                // Re-emitted verbatim, so `javascript&colon;…` must be decoded before the check.
+                let decoded = decodeEntitiesForURLCheck(value)
+                let allowed = attrName == "src" ? isSafeImageSource(decoded) : isSafeURL(decoded)
+                if !allowed { continue }
             }
             out += " " + bns.substring(with: m.range)
         }
         return out + (selfClosing ? " />" : ">")
     }
 
-    /// Like `escapeHTML`, but passes valid HTML entity references (`&copy;`, `&#169;`, `&#xA9;`)
-    /// through unchanged so they render as the intended character. Per CommonMark 6.2.
     private static func escapeHTMLKeepingEntities(_ string: String) -> String {
         let ns = string as NSString
         let matches = htmlEntityPattern.matches(in: string, range: NSRange(location: 0, length: ns.length))
@@ -420,21 +349,14 @@ enum MarkdownRenderer {
     }
 
     private static func inlineMarkdown(_ text: String, refs: RefDefs = [:]) -> String {
-        // Inline code — pulled out *first* so no later inline pass (autolink,
-        // escape, link, emphasis, …) can reach inside a code span. CommonMark:
-        // code span content is literal. The U+E000/U+E001 Private Use
-        // delimiters carry no markdown meaning, so later passes skip them.
+        // Code spans come out first so no later pass reaches inside them; the Private Use delimiters carry no markdown meaning.
         var codeSpans: [String] = []
         var s = text.replacing(codePattern) { match in
             codeSpans.append("<code>\(escapeHTML(match[1]))</code>")
             return "\u{E000}\(codeSpans.count - 1)\u{E001}"
         }
 
-        // Inline math — stashed before every other inline pass so emphasis,
-        // escaping, and link parsing can't reach into the TeX source. Code spans
-        // are already removed above, so `` `$x$` `` stays literal code. `\$` is an
-        // escaped literal dollar and must never open a math span, so park it
-        // first and restore it at the very end. `\(…\)` is tried before `$…$`.
+        // `\$` is parked first so an escaped dollar can never open a math span.
         s = s.replacingOccurrences(of: "\\$", with: "\u{E004}")
         var mathSpans: [String] = []
         func stashMath(_ tex: String) -> String {
@@ -444,16 +366,12 @@ enum MarkdownRenderer {
         s = s.replacing(inlineMathParenPattern) { stashMath($0[1]) }
         s = s.replacing(inlineMathDollarPattern) { stashMath($0[1]) }
 
-        // Backslash escapes: code/math already stashed, so `\<punct>` is now a literal
-        // no later pass can treat as syntax. Restored, HTML-escaped, at the end.
         var escapedChars: [String] = []
         s = s.replacing(backslashEscapePattern) { match in
             escapedChars.append(match[1])
             return "\u{E005}\(escapedChars.count - 1)\u{E006}"
         }
 
-        // Autolinks: <https://…> and <user@example.com>. Rewrite to <a> tags before escaping
-        // so the rest of the pipeline treats them like any other HTML link.
         s = s.replacing(autolinkURLPattern) { match in
             let url = match[1]
             guard isSafeURL(url) else { return match[0] }
@@ -464,18 +382,16 @@ enum MarkdownRenderer {
             return "<a href=\"mailto:\(escapeURLForAttribute(email))\">\(escapeURLForAttribute(email))</a>"
         }
 
-        // Images: ![alt](url "title"). Alt/title are HTML-escaped here because the
-        // later `escapeHTMLPreservingTags` pass re-emits attribute values verbatim.
+        // Alt/title are escaped here: `escapeHTMLPreservingTags` re-emits attribute values verbatim.
         s = s.replacing(imagePattern) { match in
             let (rawURL, title) = splitLinkDestination(match[2])
             let url = sanitizedMarkdownURL(rawURL)
-            guard isSafeURL(url) else { return match[0] }
+            guard isSafeImageSource(url) else { return match[0] }
             let titleAttr = title.map { " title=\"\(escapeHTML($0))\"" } ?? ""
             return "<img src=\"\(escapeURLForAttribute(url))\" alt=\"\(escapeHTML(match[1]))\"\(titleAttr)>"
         }
 
-        // Links: [text](url "title"). The link text stays raw — the trailing
-        // `escapeHTMLPreservingTags` escapes it (and later passes give it emphasis).
+        // Link text stays raw so the later passes can still escape and emphasise it.
         s = s.replacing(linkPattern) { match in
             let (rawURL, title) = splitLinkDestination(match[2])
             let url = sanitizedMarkdownURL(rawURL)
@@ -484,10 +400,6 @@ enum MarkdownRenderer {
             return "<a href=\"\(escapeURLForAttribute(url))\"\(titleAttr)>\(match[1])</a>"
         }
 
-        // Reference images then reference links, resolved against the definitions
-        // collected in `render`. Inline images/links above are already consumed.
-        // Images run first so `![alt][ref]` becomes an `<img>` before the link
-        // passes (whose patterns exclude `!`-prefixed brackets anyway) see it.
         if !refs.isEmpty {
             s = s.replacing(fullRefImagePattern) { match in
                 let label = match[2].isEmpty ? match[1] : match[2]
@@ -505,14 +417,10 @@ enum MarkdownRenderer {
             }
         }
 
-        // GFM bare-URL autolinking — only in plain-text spans (never inside an
-        // existing tag or anchor). Runs while code/math are stashed.
         s = autolinkBareURLs(s)
 
-        // Escape now that every link/image/autolink tag is emitted; real tags survive.
         s = escapeHTMLPreservingTags(s)
 
-        // Bold + italic
         s = s.replacing(boldItalicStarPattern) { match in
             "<strong><em>\(match[1])</em></strong>"
         }
@@ -520,7 +428,6 @@ enum MarkdownRenderer {
             "<strong><em>\(match[1])</em></strong>"
         }
 
-        // Bold
         s = s.replacing(boldStarPattern) { match in
             "<strong>\(match[1])</strong>"
         }
@@ -528,7 +435,6 @@ enum MarkdownRenderer {
             "<strong>\(match[1])</strong>"
         }
 
-        // Italic
         s = s.replacing(italicStarPattern) { match in
             "<em>\(match[1])</em>"
         }
@@ -536,28 +442,23 @@ enum MarkdownRenderer {
             "<em>\(match[1])</em>"
         }
 
-        // Strikethrough
         s = s.replacing(strikePattern) { match in
             "<del>\(match[1])</del>"
         }
 
-        // CommonMark: two trailing spaces + newline = hard break. Bare newline = soft break (space) so text reflows.
         s = s.replacingOccurrences(of: "  \n", with: "<br>")
         s = s.replacingOccurrences(of: "\n", with: " ")
 
-        // Restore math spans (raw TeX wrapped for the math renderer) and the escaped-dollar
-        // placeholder, then code spans — all after the delimiter-based passes.
+        // Restores must follow every delimiter-based pass.
         for (idx, span) in mathSpans.enumerated() {
             s = s.replacingOccurrences(of: "\u{E002}\(idx)\u{E003}", with: span)
         }
         s = s.replacingOccurrences(of: "\u{E004}", with: "$")
 
-        // Restore code spans now that all delimiter-based passes are done.
         for (idx, span) in codeSpans.enumerated() {
             s = s.replacingOccurrences(of: "\u{E000}\(idx)\u{E001}", with: span)
         }
 
-        // Restore backslash-escaped literals last, HTML-escaping so `\<` → &lt;.
         for (idx, ch) in escapedChars.enumerated() {
             s = s.replacingOccurrences(of: "\u{E005}\(idx)\u{E006}", with: escapeHTML(ch))
         }
@@ -567,9 +468,7 @@ enum MarkdownRenderer {
 
     // MARK: - Reference Links & Autolinking
 
-    /// Fence-aware first pass: harvests `[label]: url "title"` definitions
-    /// (case-insensitive labels, first wins) and blanks those lines so they don't
-    /// render. Lines inside a fenced code block are skipped.
+    /// Blanks each definition line in place; labels are case-insensitive and the first definition wins.
     private static func collectReferenceDefinitions(_ lines: inout [String]) -> RefDefs {
         var refs: RefDefs = [:]
         var inFence = false
@@ -600,7 +499,6 @@ enum MarkdownRenderer {
         return refs
     }
 
-    /// Parses one `[label]: url "title"` definition line, or `nil` if it isn't one.
     private static func parseRefDef(_ line: String) -> (label: String, url: String, title: String?)? {
         let ns = line as NSString
         guard let m = refDefPattern.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else {
@@ -616,8 +514,7 @@ enum MarkdownRenderer {
         return (label, url, title)
     }
 
-    /// Builds an anchor for a reference link, or `nil` when the label is undefined
-    /// or resolves to an unsafe URL (caller falls back to the literal text).
+    /// `nil` when the label is undefined or the URL unsafe; the caller keeps the literal text.
     private static func referenceAnchor(text: String, label: String, refs: RefDefs) -> String? {
         guard let def = refs[label.lowercased()] else { return nil }
         let url = sanitizedMarkdownURL(def.url)
@@ -626,19 +523,15 @@ enum MarkdownRenderer {
         return "<a href=\"\(escapeURLForAttribute(url))\"\(titleAttr)>\(text)</a>"
     }
 
-    /// Builds an `<img>` for a reference image, or `nil` when the label is
-    /// undefined or resolves to an unsafe URL (caller falls back to literal text).
     private static func referenceImage(alt: String, label: String, refs: RefDefs) -> String? {
         guard let def = refs[label.lowercased()] else { return nil }
         let url = sanitizedMarkdownURL(def.url)
-        guard isSafeURL(url) else { return nil }
+        guard isSafeImageSource(url) else { return nil }
         let titleAttr = def.title.map { " title=\"\(escapeHTML($0))\"" } ?? ""
         return "<img src=\"\(escapeURLForAttribute(url))\" alt=\"\(escapeHTML(alt))\"\(titleAttr)>"
     }
 
-    /// Splits a link/image destination `url "title"` into its URL and optional
-    /// title. Title delimiters (`"…"`, `'…'`, `(…)`) must be preceded by
-    /// whitespace, so a URL like `Foo_(bar)` keeps its trailing parens.
+    /// A title delimiter must follow whitespace, so a URL like `Foo_(bar)` keeps its parens.
     private static func splitLinkDestination(_ dest: String) -> (url: String, title: String?) {
         let trimmed = dest.trimmingCharacters(in: .whitespaces)
         guard let closer = trimmed.last else { return (trimmed, nil) }
@@ -649,7 +542,7 @@ enum MarkdownRenderer {
         case ")": opener = "("
         default: return (trimmed, nil)
         }
-        let body = trimmed.dropLast()  // without the closing delimiter
+        let body = trimmed.dropLast()
         guard let openIdx = body.lastIndex(of: opener), openIdx > body.startIndex,
               body[body.index(before: openIdx)].isWhitespace else {
             return (trimmed, nil)
@@ -659,9 +552,7 @@ enum MarkdownRenderer {
         return (url, title)
     }
 
-    /// Wraps bare `http(s)://` URLs in anchors, but only inside plain-text spans:
-    /// it walks tags like `escapeHTMLPreservingTags` and skips both tag interiors
-    /// (attribute values) and the text of an already-open `<a>` element.
+    /// Skips tag interiors and the text of an open `<a>`, so an existing link is never re-linked.
     private static func autolinkBareURLs(_ text: String) -> String {
         let ns = text as NSString
         let matches = htmlTagPattern.matches(in: text, range: NSRange(location: 0, length: ns.length))
@@ -687,8 +578,6 @@ enum MarkdownRenderer {
         return result
     }
 
-    /// Linkifies bare URLs in a plain-text segment, trimming trailing sentence
-    /// punctuation and unbalanced closing parens (GFM autolink extension).
     private static func linkifyBareURLs(_ text: String) -> String {
         text.replacing(bareURLPattern) { match in
             var url = Substring(match[0])
@@ -699,8 +588,7 @@ enum MarkdownRenderer {
                     trailing = String(last) + trailing
                     url = url.dropLast()
                 case ")":
-                    // Drop a closing paren only when it isn't balanced by an opener
-                    // in the URL, so `…/Foo_(bar)` keeps its paren.
+                    // Only an unbalanced `)` is trimmed, so `…/Foo_(bar)` keeps its paren.
                     guard url.filter({ $0 == ")" }).count > url.filter({ $0 == "(" }).count else { break loop }
                     trailing = String(last) + trailing
                     url = url.dropLast()
@@ -717,8 +605,7 @@ enum MarkdownRenderer {
 
     // MARK: - List Helpers
 
-    /// One block inside a list item: a prose paragraph (raw, pre-inline) or a
-    /// finished HTML block (fenced code or a nested list).
+    /// `.para` is raw markdown, `.block` finished HTML.
     private enum ListPiece { case para(String); case block(String) }
 
     private static func listItemIndent(_ line: String) -> Int {
@@ -734,9 +621,6 @@ enum MarkdownRenderer {
         return nil
     }
 
-    /// A line that, when it appears under-indented, ends a list item's lazy
-    /// continuation: another marker, a heading, a blockquote, a code fence, or a
-    /// thematic break (so `- a` then `***` closes the list and emits an `<hr>`).
     private static func endsItemContinuation(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         return line.matchesPattern(ulPattern) || line.matchesPattern(olPattern)
@@ -755,11 +639,7 @@ enum MarkdownRenderer {
         return String(s)
     }
 
-    /// Unified ordered/unordered/task list parser, advancing `i`. Handles
-    /// arbitrary nesting by indentation, mixed marker types (a `-` sublist under
-    /// a `1.` item and vice versa), tight vs loose items, ordered `start`
-    /// numbers (issue #16), and task checkboxes. Every path advances `i` or
-    /// breaks, preserving the no-hang invariant (issue #8).
+    /// Every path advances `i` or breaks; a stuck index hangs the app.
     private static func parseList(_ i: inout Int, lines: [String], baseIndent: Int, hasMermaid: inout Bool, refs: RefDefs = [:]) -> String {
         let ordered = lines[i].matchesPattern(olPattern)
         var startNumber = 1
@@ -769,8 +649,6 @@ enum MarkdownRenderer {
         var hasTask = false
 
         while i < lines.count {
-            // A blank line only continues the list when a same-type sibling
-            // follows at this indent; otherwise the list ends here.
             if lines[i].trimmingCharacters(in: .whitespaces).isEmpty {
                 guard let peek = nextNonBlank(after: i, in: lines),
                       listItemIndent(lines[peek]) == baseIndent,
@@ -785,7 +663,6 @@ enum MarkdownRenderer {
             if listItemIndent(line) != baseIndent { break }
             guard ordered ? line.matchesPattern(olPattern) : line.matchesPattern(ulPattern) else { break }
 
-            // Marker geometry: everything after the "-, *, +" or "N." plus one space.
             let afterLead = line.drop(while: { $0 == " " || $0 == "\t" })
             let markerBodyLen: Int
             if ordered {
@@ -800,7 +677,6 @@ enum MarkdownRenderer {
             var text = String(afterLead.dropFirst(markerBodyLen))
             i += 1
 
-            // Task checkbox (unordered only) — split the marker off the label.
             var task = 0
             if !ordered {
                 if text == "[ ]" || text.hasPrefix("[ ] ") { task = 1 }
@@ -840,11 +716,7 @@ enum MarkdownRenderer {
         return "<ul\(hasTask ? " class=\"task-list\"" : "")>\(body)</ul>"
     }
 
-    /// Collects one list item's blocks, advancing `i`. Prose runs are joined
-    /// before inline processing so emphasis spans a soft wrap (issue #15).
-    /// Indented content that still belongs to the item — nested lists, fenced
-    /// code (issue #9), and continuation paragraphs — stays inside the item; a
-    /// blank line before such content makes the list loose.
+    /// Prose runs are joined before inline processing so emphasis can span a soft wrap.
     private static func collectItem(_ i: inout Int, lines: [String], baseIndent: Int, contentIndent: Int,
                                     firstText: String, loose: inout Bool, hasMermaid: inout Bool,
                                     refs: RefDefs = [:]) -> [ListPiece] {
@@ -861,8 +733,6 @@ enum MarkdownRenderer {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.isEmpty {
-                // Keep the item open only if the following content is indented
-                // into it; a multi-block item makes the list loose.
                 guard let peek = nextNonBlank(after: i, in: lines),
                       listItemIndent(lines[peek]) >= contentIndent else { break }
                 loose = true
@@ -874,14 +744,12 @@ enum MarkdownRenderer {
             let indent = listItemIndent(line)
 
             if indent >= contentIndent {
-                // Fenced code block inside the item (issue #9).
                 if trimmed.matchesPattern(fencePattern) {
                     flush()
                     let openerIndent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
                     pieces.append(.block(consumeFence(&i, lines: lines, openerIndent: openerIndent, hasMermaid: &hasMermaid)))
                     continue
                 }
-                // Nested list of either type — de-indent to test the marker.
                 let deindented = dropIndent(line, contentIndent)
                 if deindented.matchesPattern(ulPattern) || deindented.matchesPattern(olPattern) {
                     flush()
@@ -893,8 +761,6 @@ enum MarkdownRenderer {
                 continue
             }
 
-            // Under-indented: a dedent, a sibling marker, or a new block ends the
-            // item; a plain line is a lazy paragraph continuation.
             if indent < baseIndent { break }
             if endsItemContinuation(line) { break }
             prose.append(trimmed)
@@ -905,10 +771,17 @@ enum MarkdownRenderer {
         return pieces
     }
 
-    /// Consumes a fenced code block, advancing `i` past the closing fence (or to
-    /// EOF if unclosed). Each content line is de-indented by up to `openerIndent`
-    /// columns (CommonMark §6.7) so list-item indentation doesn't leak into the
-    /// rendered code.
+    /// `nil` for an unclosed or empty block, which the normal parser then treats as a rule.
+    private static func frontMatterEnd(_ lines: [String]) -> Int? {
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+        for k in 1..<lines.count {
+            let t = lines[k].trimmingCharacters(in: .whitespaces)
+            if t == "---" || t == "..." { return k > 1 ? k : nil }
+        }
+        return nil
+    }
+
+    /// An unclosed fence consumes to EOF; content is de-indented by up to `openerIndent` so list indentation doesn't leak into the code.
     private static func consumeFence(_ i: inout Int, lines: [String], openerIndent: Int, hasMermaid: inout Bool) -> String {
         let stripped = lines[i].drop(while: { $0 == " " || $0 == "\t" })
         let fenceChar: Character = stripped.first == "~" ? "~" : "`"
@@ -939,17 +812,7 @@ enum MarkdownRenderer {
 
     // MARK: - Block Helpers
 
-    /// Parses a display-math block opening at `lines[i]` (`$$ … $$` or `\[ … \]`),
-    /// advancing `i` past it. Returns the rendered `<div>` (raw TeX inside, for the
-    /// bundled math renderer to typeset), `""` for an empty block, or `nil` when the line
-    /// doesn't open display math — in which case `i` is left untouched so the caller
-    /// can keep trying other block types. An unterminated block consumes to EOF
-    /// rather than hanging.
-    /// True when `line` opens a display-math block that `parseDisplayMath` would
-    /// claim — either single-line (`$$x^2$$` / `\[x^2\]`) or a bare opener
-    /// (`$$` / `\[` alone). Used so the paragraph collector releases a math line
-    /// that follows prose with no blank line between them. Mirrors the opener
-    /// tests in `parseDisplayMath`, so `$$5 million` / `\[RFC 1234]` stay prose.
+    /// Must mirror the opener tests in `parseDisplayMath`, so the paragraph collector releases exactly the lines it will claim.
     private static func isDisplayMathOpener(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         let closeTok: String
@@ -957,10 +820,11 @@ enum MarkdownRenderer {
         else if trimmed.hasPrefix("\\[") { closeTok = "\\]" }
         else { return false }
         let rest = String(trimmed.dropFirst(2))
-        if rest.range(of: closeTok) != nil { return true }          // single-line
-        return rest.trimmingCharacters(in: .whitespaces).isEmpty     // bare opener
+        if rest.range(of: closeTok) != nil { return true }
+        return rest.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// `""` for an empty block; `nil` with `i` untouched when the line doesn't open display math. An unterminated block consumes to EOF.
     private static func parseDisplayMath(_ i: inout Int, lines: [String]) -> String? {
         let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
         let isDollar = trimmed.hasPrefix("$$")
@@ -970,17 +834,13 @@ enum MarkdownRenderer {
 
         let rest = String(trimmed.dropFirst(2))
 
-        // Single-line form: opener and closer on the same line, e.g. `$$x^2$$`.
         if let r = rest.range(of: closeTok) {
             i += 1
             let tex = String(rest[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
             return tex.isEmpty ? "" : "<div class=\"rd-math rd-math-display\">\(escapeHTML(tex))</div>"
         }
 
-        // Multi-line form: only enter when the opener line is blank after the
-        // delimiter — `$$x^2` (no closer on the same line) is prose, not math.
-        // This prevents `$$5 million` or `\[RFC 1234]` from eating subsequent
-        // lines as TeX content.
+        // An opener with trailing text and no closer is prose, so `$$5 million` can't eat the following lines as TeX.
         guard rest.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         var content: [String] = []
         i += 1
@@ -998,10 +858,7 @@ enum MarkdownRenderer {
         return tex.isEmpty ? "" : "<div class=\"rd-math rd-math-display\">\(escapeHTML(tex))</div>"
     }
 
-    /// Setext underline level: 1 for a line of only `=`, 2 for a line of only
-    /// `-`, `nil` otherwise. The caller applies it to the immediately-preceding
-    /// paragraph line. Precedence with `<hr>` is resolved by the caller: a bare
-    /// `-` run only reaches here when it follows a paragraph line.
+    /// Precondition: the caller has already ruled out `<hr>`, so a bare `-` run here follows a paragraph line.
     private static func setextUnderline(_ line: String) -> Int? {
         let t = line.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return nil }
@@ -1038,9 +895,7 @@ enum MarkdownRenderer {
             .replacingOccurrences(of: "'", with: "&#39;")
     }
 
-    /// Escapes a URL for use in an `href`/`src` attribute and neutralizes chars that would
-    /// otherwise match later inline regex passes (italic/bold/strike/code) and corrupt the
-    /// attribute. Browsers decode the entities back to the original characters on navigation.
+    /// `_ * ~ \`` are entity-encoded so later emphasis/code passes can't corrupt the attribute; browsers decode them back.
     private static func escapeURLForAttribute(_ url: String) -> String {
         escapeHTML(url)
             .replacingOccurrences(of: "_", with: "&#95;")
@@ -1067,8 +922,57 @@ enum MarkdownRenderer {
         return htmlBlockTags.contains(tagName)
     }
 
+    /// Named references resolving to characters that affect scheme parsing.
+    private static let namedEntitiesForURLCheck: [String: Character] = [
+        "amp": "&", "AMP": "&", "lt": "<", "LT": "<", "gt": ">", "GT": ">",
+        "quot": "\"", "QUOT": "\"", "apos": "'", "colon": ":", "semi": ";",
+        "sol": "/", "bsol": "\\", "num": "#", "Tab": "\t", "NewLine": "\n",
+    ]
+
+    /// Mirrors browser decoding: numeric references resolve with or without the trailing `;`, unknown ones stay literal.
+    private static func decodeEntitiesForURLCheck(_ value: String) -> String {
+        guard value.contains("&") else { return value }
+        var result = ""
+        var s = Substring(value)
+        while let amp = s.firstIndex(of: "&") {
+            result += s[..<amp]
+            var rest = s[s.index(after: amp)...]
+            if rest.first == "#" {
+                rest = rest.dropFirst()
+                let isHex = rest.first == "x" || rest.first == "X"
+                if isHex { rest = rest.dropFirst() }
+                let digits = rest.prefix(while: { $0.isASCII && (isHex ? $0.isHexDigit : $0.isNumber) })
+                if !digits.isEmpty, digits.count <= 7,
+                   let code = UInt32(digits, radix: isHex ? 16 : 10),
+                   let scalar = Unicode.Scalar(code) {
+                    result.append(Character(scalar))
+                    rest = rest.dropFirst(digits.count)
+                    if rest.first == ";" { rest = rest.dropFirst() }
+                    s = rest
+                    continue
+                }
+            } else {
+                let name = rest.prefix(while: { $0.isLetter || $0.isNumber })
+                if !name.isEmpty, rest.dropFirst(name.count).first == ";",
+                   let ch = namedEntitiesForURLCheck[String(name)] {
+                    result.append(ch)
+                    s = rest.dropFirst(name.count + 1)
+                    continue
+                }
+            }
+            result.append("&")
+            s = s[s.index(after: amp)...]
+        }
+        result += s
+        return result
+    }
+
     private static func isSafeURL(_ url: String) -> Bool {
-        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Browsers strip tab/newline/CR before parsing, so `jav\tascript:` navigates as `javascript:`.
+        var trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" }) {
+            trimmed.removeAll(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" })
+        }
         let lowercased = trimmed.lowercased()
         if trimmed.isEmpty || lowercased.hasPrefix("//") {
             return false
@@ -1096,6 +1000,15 @@ enum MarkdownRenderer {
         return true
     }
 
+    /// `data:image/…` is safe only as an `<img>` source (rendered statically, CSP allows `img-src data:`); a `data:` href stays blocked.
+    private static func isSafeImageSource(_ url: String) -> Bool {
+        // Prefix test first: data URIs can run to megabytes of base64.
+        if url.drop(while: \.isWhitespace).prefix(11).lowercased() == "data:image/" {
+            return true
+        }
+        return isSafeURL(url)
+    }
+
     private static func sanitizedMarkdownURL(_ url: String) -> String {
         url
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1104,24 +1017,13 @@ enum MarkdownRenderer {
             .replacingOccurrences(of: "&#39;", with: "'")
     }
 
-    /// GitHub-style heading slug. Lowercase, strip punctuation (keep letters,
-    /// digits, hyphens, underscores, and Unicode letters like accented chars),
-    /// convert whitespace to hyphens, trim, and deduplicate against earlier
-    /// headings in the same document.
     private static func uniqueSlug(for text: String, existing: inout [String: Int]) -> String {
         var slug = text.lowercased()
-        // Drop inline HTML tags so e.g. `## <code>foo</code>` slugs to `foo`.
-        slug = slug.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        // Keep letters (Unicode), digits, hyphens, underscores, and whitespace; drop the rest.
-        slug = slug.replacingOccurrences(of: "[^\\p{L}\\p{N}\\-_\\s]", with: "", options: .regularExpression)
-        // Each whitespace char becomes one hyphen — `\s+ -> -` would collapse
-        // runs, but GitHub preserves them (e.g. `Foo — bar` strips the em dash
-        // leaving two spaces, which become `foo--bar`, not `foo-bar`). TOCs
-        // generated by GitHub-style tools depend on the preserved gap.
-        slug = slug.replacingOccurrences(of: "\\s", with: "-", options: .regularExpression)
-        // Trim leading/trailing hyphens.
+        slug = slug.replacingMatches(of: slugTagPattern, with: "")
+        slug = slug.replacingMatches(of: slugStripPattern, with: "")
+        // One hyphen per whitespace char, not per run: GitHub keeps the gap (`Foo — bar` becomes `foo--bar`) and TOC tools depend on it.
+        slug = slug.replacingMatches(of: slugSpacePattern, with: "-")
         slug = slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        // Fallback if the heading was entirely punctuation.
         if slug.isEmpty { slug = "section" }
 
         let count = existing[slug, default: 0]
@@ -1138,22 +1040,24 @@ private extension String {
         return regex.firstMatch(in: self, range: range) != nil
     }
 
+    func replacingMatches(of regex: NSRegularExpression, with template: String) -> String {
+        regex.stringByReplacingMatches(in: self, range: NSRange(startIndex..., in: self), withTemplate: template)
+    }
+
     func replacing(_ regex: NSRegularExpression, using transform: ([String]) -> String) -> String {
         let nsRange = NSRange(startIndex..., in: self)
         let matches = regex.matches(in: self, range: nsRange)
         if matches.isEmpty { return self }
 
-        // Build result forward, copying unmatched segments and transformed matches
+        // Single forward pass: ranges from the original go stale once the string is mutated.
         let ns = self as NSString
         var result = ""
         var lastEnd = 0
         for match in matches {
             let matchRange = match.range
-            // Copy text before this match
             if matchRange.location > lastEnd {
                 result += ns.substring(with: NSRange(location: lastEnd, length: matchRange.location - lastEnd))
             }
-            // Extract groups from original string
             var groups: [String] = []
             for g in 0..<match.numberOfRanges {
                 let gr = match.range(at: g)
@@ -1166,7 +1070,6 @@ private extension String {
             result += transform(groups)
             lastEnd = matchRange.location + matchRange.length
         }
-        // Copy remaining text
         if lastEnd < ns.length {
             result += ns.substring(from: lastEnd)
         }

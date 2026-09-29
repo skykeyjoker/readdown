@@ -4,7 +4,7 @@ extension NSAppearance {
     var isDark: Bool { bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
 }
 
-/// Colors and metrics for the reader chrome. Values track `HTMLTemplate.swift`.
+/// Values track `HTMLTemplate.swift`.
 enum ReaderTheme {
     static var activePalette: ReaderThemePalette {
         ThemePreferences.shared.palette(systemIsDark: NSApp.effectiveAppearance.isDark)
@@ -28,7 +28,6 @@ enum ReaderTheme {
 }
 
 extension View {
-    /// Filled shape with a hairline border and soft shadow, for the pills and find bar.
     func floatingSurface(_ shape: some InsettableShape, fill: some ShapeStyle) -> some View {
         background(fill, in: shape)
             .overlay(shape.strokeBorder(ReaderTheme.hairline))
@@ -41,6 +40,7 @@ final class FindState: ObservableObject {
     @Published var searchText = ""
     @Published var totalMatches = 0
     @Published var currentMatch = 0  // 1-indexed; 0 means no active match
+    @Published var focusRequest = 0
 }
 
 /// Availability and visibility reported by the table-of-contents script in the
@@ -65,10 +65,7 @@ struct ContentView: View {
     @State private var pillDismissWork: DispatchWorkItem?
 
     init(document: MarkdownDocument, baseURL: URL?, fileURL: URL? = nil) {
-        // Resolve dark vs light at template-generation time so the embedded
-        // Mermaid theme matches the page palette. WKWebView's JS-side dark-mode
-        // signals (`matchMedia`, `getComputedStyle` of var()-resolved colors)
-        // are unreliable, so the source of truth is Swift's `NSAppearance`.
+        // Appearance source of truth is `NSAppearance`; WebKit's media query is unreliable here.
         let isDark = NSApp.effectiveAppearance.isDark
         let provider: (Bool) -> ReaderThemePalette = { systemIsDark in
             ThemePreferences.shared.palette(systemIsDark: systemIsDark)
@@ -95,14 +92,17 @@ struct ContentView: View {
                 WebView(baseURL: baseURL, findState: findState,
                         tableOfContentsState: tableOfContentsState, watcher: watcher)
                     .frame(minWidth: 500, minHeight: 400)
-                // Over the web view, under the pills: restores header dragging,
-                // which the web view would otherwise swallow.
                 WindowDragArea()
                     .frame(height: ReaderTheme.headerStripHeight)
                     .frame(maxWidth: .infinity, alignment: .top)
                 HStack(spacing: 0) {
                     titlePill
                     Spacer(minLength: ReaderTheme.headerEdgePadding)
+                    if let pillText {
+                        StatusPill(text: pillText)
+                            .padding(.trailing, 8)
+                            .transition(.opacity)
+                    }
                     actionPill
                 }
                 .padding(.top, ReaderTheme.headerTopPadding)
@@ -110,13 +110,6 @@ struct ContentView: View {
                 .padding(.trailing, ReaderTheme.headerEdgePadding)
             }
                 .ignoresSafeArea(.container, edges: .top)
-                .overlay(alignment: .bottomTrailing) {
-                    if let pillText {
-                        StatusPill(text: pillText)
-                            .padding(16)
-                            .transition(.opacity)
-                    }
-                }
                 .background(WindowAccessor { window in
                     self.window = window
                     WindowCascader.shared.cascade(window)
@@ -131,14 +124,17 @@ struct ContentView: View {
         }
         .font(typographyPreferences.typography.ui.swiftUIFont)
         .onReceive(NotificationCenter.default.publisher(for: .findInDocument)) { _ in
-            // Only the key window responds. `isKeyWindow` is more reliable than
-            // comparing against `NSApp.keyWindow` when SwiftUI re-wraps windows.
+            // `isKeyWindow`, not `NSApp.keyWindow`: SwiftUI re-wraps windows.
             guard window?.isKeyWindow == true else { return }
             showFindBar()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showInFinder)) { _ in
             guard window?.isKeyWindow == true else { return }
             revealInFinder()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .copyFilePath)) { _ in
+            guard window?.isKeyWindow == true else { return }
+            copyFilePath()
         }
         .onChange(of: watcher.html) { _ in
             if watcher.lastChangeSource == .disk {
@@ -153,8 +149,7 @@ struct ContentView: View {
         }
     }
 
-    /// The file name, replacing the hidden system title. Non-interactive so
-    /// clicks fall through to the drag strip.
+    /// Non-interactive so clicks reach the drag strip.
     private var titlePill: some View {
         Text(fileURL?.lastPathComponent ?? "Untitled")
             .font(typographyPreferences.typography.ui.swiftUIFont)
@@ -166,11 +161,11 @@ struct ContentView: View {
             .allowsHitTesting(false)
     }
 
-    /// Custom rather than `.toolbar`, which brings a system capsule, an opaque
-    /// header band, and non-working tooltips.
+    /// Not `.toolbar`: it brings a system capsule, an opaque header band, and broken tooltips.
     private var actionPill: some View {
         HStack(spacing: 2) {
-            CopyButton(text: { watcher.text }) {
+            CopyButton(text: { watcher.text },
+                       html: { ClipboardExport.htmlFragment(fromRenderedBody: watcher.bodyHTML) }) {
                 UsageMetrics.record(.copyFile)
                 showPill("Full contents copied to clipboard")
             }
@@ -185,18 +180,28 @@ struct ContentView: View {
             ) {
                 NotificationCenter.default.post(name: .toggleTableOfContents, object: nil)
             }
-            PillIconButton(icon: "folder", label: "Show in Finder",
-                           disabled: fileURL == nil, action: revealInFinder)
+            PillMenu(icon: "folder", label: "File Location", disabled: fileURL == nil) {
+                Button("Show in Finder", action: revealInFinder)
+                Button("Copy Path", action: copyFilePath)
+            }
         }
         .padding(4)
         .floatingSurface(Capsule(), fill: ReaderTheme.pill)
     }
 
-    /// Shared by the pill, the File menu, and ⇧⌘R.
     private func revealInFinder() {
         guard let fileURL else { return }
         UsageMetrics.record(.showInFinder)
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+
+    private func copyFilePath() {
+        guard let fileURL else { return }
+        UsageMetrics.record(.copyPath)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(fileURL.path, forType: .string)
+        showPill("Path copied to clipboard")
     }
 
     private func showFindBar() {
@@ -204,6 +209,7 @@ struct ContentView: View {
         withAnimation(.easeOut(duration: 0.15)) {
             findState.isVisible = true
         }
+        findState.focusRequest += 1
     }
 
     private func showPill(_ text: String) {
@@ -220,10 +226,7 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
-    /// Transparent, full-height header with the pills floating over the content.
-    /// No `NSToolbar`: on Tahoe even an empty one draws an opaque header backdrop
-    /// that would cover the pills. Hiding the title drops the Document Title Menu;
-    /// Show in Finder and the File menu cover those actions.
+    /// No `NSToolbar`: on Tahoe even an empty one paints an opaque header over the pills.
     private func configureWindowChrome(_ window: NSWindow) {
         if !window.styleMask.contains(.fullSizeContentView) {
             window.styleMask.insert(.fullSizeContentView)
@@ -237,8 +240,7 @@ struct ContentView: View {
     }
 }
 
-/// Centers the traffic lights on the pill row. Re-applied on titlebar layout
-/// (resize, key-state changes), which resets the button positions.
+/// AppKit resets the button positions on every titlebar layout, hence the re-apply.
 final class TrafficLightAligner {
     private static var associatedKey: UInt8 = 0
 
@@ -299,8 +301,7 @@ final class TrafficLightAligner {
     }
 }
 
-/// A transparent strip that drags the window on mouse-down, restoring the
-/// title-bar drag the WKWebView underneath would otherwise swallow.
+/// Restores the title-bar drag the WKWebView underneath would swallow.
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { DragView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
@@ -311,78 +312,154 @@ struct WindowDragArea: NSViewRepresentable {
     }
 }
 
-/// Transient feedback pill ("Updated", "Full contents copied to clipboard").
+/// Never truncates; the title pill yields instead.
+extension CheckIcon {
+    struct Shape: SwiftUI.Shape {
+        func path(in rect: CGRect) -> Path {
+            let s = rect.width / CheckIcon.grid
+            var path = Path()
+            path.addLines(CheckIcon.points.map { CGPoint(x: rect.minX + $0.x * s, y: rect.minY + $0.y * s) })
+            return path
+        }
+    }
+
+    struct View: SwiftUI.View {
+        let size: CGFloat
+        var body: some SwiftUI.View {
+            Shape()
+                .stroke(style: StrokeStyle(lineWidth: strokeWidth * size / grid, lineCap: .round, lineJoin: .round))
+                .frame(width: size, height: size)
+        }
+    }
+}
+
 private struct StatusPill: View {
     let text: String
 
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.regularMaterial, in: Capsule())
+        HStack(spacing: 6) {
+            CheckIcon.View(size: 12)
+                .foregroundStyle(ReaderTheme.copyConfirm)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 12)
+        .frame(height: ReaderTheme.headerPillHeight)
+        .floatingSurface(Capsule(), fill: ReaderTheme.pill)
+        .allowsHitTesting(false)
     }
 }
 
-/// Icon button with a hover highlight and an explicit accessibility label.
-private struct PillIconButton: View {
-    private static let hitArea = CGSize(width: 30, height: 26)
-    private static let hoverShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-    private static let hoverOpacity = 0.07
+private struct PillIcon<Glyph: View>: View {
+    private static var hitArea: CGSize { CGSize(width: 30, height: 26) }
+    private static var hoverShape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+    private static var hoverOpacity: Double { 0.07 }
 
-    let icon: String
+    var tint: Color?
+    var disabled = false
+    let hovered: Bool
+    @ViewBuilder let glyph: () -> Glyph
+
+    var body: some View {
+        glyph()
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(disabled ? AnyShapeStyle(.tertiary)
+                                      : tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+            .frame(width: Self.hitArea.width, height: Self.hitArea.height)
+            .background(
+                Self.hoverShape
+                    .fill(Color.primary.opacity(hovered && !disabled ? Self.hoverOpacity : 0))
+            )
+            .contentShape(Self.hoverShape)
+    }
+}
+
+private struct PillIconButton<Glyph: View>: View {
     let label: String
     var tint: Color?
     var disabled = false
     let action: () -> Void
+    @ViewBuilder let glyph: () -> Glyph
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(disabled ? AnyShapeStyle(.tertiary)
-                                          : tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
-                .frame(width: Self.hitArea.width, height: Self.hitArea.height)
-                .background(
-                    Self.hoverShape
-                        .fill(Color.primary.opacity(hovered && !disabled ? Self.hoverOpacity : 0))
-                )
-                .contentShape(Self.hoverShape)
+            PillIcon(tint: tint, disabled: disabled, hovered: hovered, glyph: glyph)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .onHover { hovered = $0 }
+        .help(label)
         .accessibilityLabel(label)
     }
 }
 
-/// Copy button that swaps to a checkmark after copying, matching the code-block one.
-private struct CopyButton: View {
-    private static let confirmationSeconds: TimeInterval = 1.6
+extension PillIconButton where Glyph == Image {
+    init(icon: String, label: String, tint: Color? = nil, disabled: Bool = false, action: @escaping () -> Void) {
+        self.init(label: label, tint: tint, disabled: disabled, action: action) { Image(systemName: icon) }
+    }
+}
 
+private struct PillMenu<Items: View>: View {
+    let icon: String
+    let label: String
+    var disabled = false
+    @ViewBuilder let items: () -> Items
+    @State private var hovered = false
+
+    var body: some View {
+        Menu(content: items) {
+            PillIcon(disabled: disabled, hovered: hovered) { Image(systemName: icon) }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(disabled)
+        .onHover { hovered = $0 }
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Confirmation state matches the code-block copy button.
+private struct CopyButton: View {
     let text: () -> String
+    var html: () -> String? = { nil }
     var onCopied: () -> Void = {}
     @State private var confirmed = false
     @State private var resetWork: DispatchWorkItem?
 
     var body: some View {
         PillIconButton(
-            icon: confirmed ? "checkmark" : "square.on.square",
             label: confirmed ? "Copied" : "Copy to Clipboard",
-            tint: confirmed ? ReaderTheme.copyConfirm : nil
+            tint: confirmed ? ReaderTheme.copyConfirm : nil,
+            action: copy
         ) {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text(), forType: .string)
-            confirmed = true
-            resetWork?.cancel()
-            let work = DispatchWorkItem { confirmed = false }
-            resetWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmationSeconds, execute: work)
-            onCopied()
+            if confirmed {
+                CheckIcon.View(size: 14)
+            } else {
+                Image(systemName: "square.on.square")
+            }
         }
+    }
+
+    private func copy() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text(), forType: .string)
+        if let html = html() {
+            pasteboard.setString(html, forType: .html)
+        }
+        confirmed = true
+        resetWork?.cancel()
+        let work = DispatchWorkItem { confirmed = false }
+        resetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + CheckIcon.confirmSeconds, execute: work)
+        onCopied()
     }
 }
 
@@ -430,7 +507,10 @@ struct FindBar: View {
         .floatingSurface(RoundedRectangle(cornerRadius: 10, style: .continuous), fill: .regularMaterial)
         .frame(maxWidth: 380)
         .padding(.horizontal, 16)
-        .onAppear { searchFocused = true }
+        .onAppear(perform: focusAndSelectSearchText)
+        .onChange(of: state.focusRequest) { _ in
+            focusAndSelectSearchText()
+        }
     }
 
     private var matchStatus: String {
@@ -443,5 +523,12 @@ struct FindBar: View {
             state.isVisible = false
         }
         state.searchText = ""
+    }
+
+    private func focusAndSelectSearchText() {
+        searchFocused = true
+        DispatchQueue.main.async {
+            (NSApp.keyWindow?.firstResponder as? NSTextView)?.selectAll(nil)
+        }
     }
 }

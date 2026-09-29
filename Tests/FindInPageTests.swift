@@ -3,9 +3,7 @@ import WebKit
 import XCTest
 @testable import ReadDown
 
-/// Drives the real in-page JavaScript (find, code-copy buttons) inside a
-/// WKWebView, loading the same HTML the app ships. Slower than pure string
-/// tests but exercises what actually runs on users' machines.
+/// Drives the real in-page JavaScript inside a WKWebView, on the same HTML the app ships.
 final class FindInPageTests: XCTestCase {
 
     // MARK: - Harness
@@ -18,6 +16,7 @@ final class FindInPageTests: XCTestCase {
         let html = HTMLTemplate.wrap(
             body: result.html,
             hasMermaid: result.hasMermaid,
+            hasMath: result.hasMath,
             palette: palette
         )
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
@@ -26,7 +25,6 @@ final class FindInPageTests: XCTestCase {
         return webView
     }
 
-    /// Polls a boolean JS expression until it holds (or fails the test).
     private func waitUntilTrue(_ webView: WKWebView, _ js: String,
                                timeout: TimeInterval = 10,
                                file: StaticString = #filePath, line: UInt = #line) {
@@ -38,7 +36,6 @@ final class FindInPageTests: XCTestCase {
         XCTFail("Timed out waiting for: \(js)", file: file, line: line)
     }
 
-    /// Synchronously evaluates JS by pumping the run loop.
     @discardableResult
     private func evaluate(_ webView: WKWebView, _ js: String) -> Any? {
         var value: Any?
@@ -212,6 +209,194 @@ final class FindInPageTests: XCTestCase {
         XCTAssertEqual(buttons, 0)
     }
 
+    func testHighlightedCodeKeepsTheBlockBackground() {
+        let webView = loadDocument("```swift\nlet x = 1\n```")
+        let bg = evaluate(webView, "getComputedStyle(document.querySelector('pre code.hljs')).backgroundColor") as? String
+        XCTAssertEqual(bg, "rgba(0, 0, 0, 0)")
+    }
+
+    func testCodeCopyButtonUsesTheSharedCheck() {
+        let webView = loadDocument("```\nx\n```")
+        let svg = evaluate(webView, "document.querySelector('.rd-copy-btn').click(), document.querySelector('.rd-copy-btn').innerHTML") as? String
+        XCTAssertEqual(svg, CheckIcon.svg)
+    }
+
+    // MARK: - Selection copy (clean HTML flavor)
+
+    private func selectAllAndExport(_ webView: WKWebView) -> String? {
+        evaluate(webView, """
+        (function() {
+            getSelection().selectAllChildren(document.body);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String
+    }
+
+    func testSelectionCopyStripsClassesAndChrome() {
+        let webView = loadDocument("""
+        # Title
+
+        | A | B |
+        |---|---|
+        | 1 | 2 |
+
+        - [ ] open
+        - [x] done
+        """)
+        let html = selectAllAndExport(webView) ?? ""
+        XCTAssertTrue(html.contains("<h1>"))
+        XCTAssertTrue(html.contains("<table>"))
+        XCTAssertFalse(html.contains("class="))
+        XCTAssertFalse(html.contains("rd-fold"))
+        XCTAssertFalse(html.contains("<svg"))
+        XCTAssertFalse(html.contains("<input"))
+        XCTAssertTrue(html.contains("☐"))
+        XCTAssertTrue(html.contains("☑"))
+    }
+
+    func testSelectionCopyKeepsLinksAndImages() {
+        let webView = loadDocument("[site](https://example.com) and ![alt text](pic.png)")
+        let html = selectAllAndExport(webView) ?? ""
+        XCTAssertTrue(html.contains("href=\"https://example.com\""))
+        XCTAssertTrue(html.contains("alt=\"alt text\""))
+    }
+
+    func testSelectionCopyStylesCodeMonospace() {
+        let webView = loadDocument("""
+        ```swift
+        let a = 1
+        ```
+        """)
+        let html = selectAllAndExport(webView) ?? ""
+        XCTAssertTrue(html.contains("Courier New"))
+        XCTAssertTrue(html.contains("let a = 1"), "got: \(html)")
+        XCTAssertFalse(html.contains("rd-copy-btn"))
+        XCTAssertFalse(html.contains("<button"))
+        XCTAssertFalse(html.contains("<span"))
+    }
+
+    /// cloneContents alone would return bare text.
+    func testSelectionInsideHeadingExportsHeadingTag() {
+        let webView = loadDocument("# Alphabet Soup")
+        let html = evaluate(webView, """
+        (function() {
+            var h = document.querySelector('h1');
+            var t = h.lastChild;
+            var r = document.createRange();
+            r.setStart(t, 0); r.setEnd(t, 8);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String ?? ""
+        XCTAssertTrue(html.contains("<h1>"), "got: \(html)")
+    }
+
+    func testSelectionCopyExportsMathAsTeX() {
+        let webView = loadDocument("Euler: $e^{i\\pi} = -1$")
+        waitUntilTrue(webView, "document.querySelectorAll('.katex').length >= 1")
+        let html = selectAllAndExport(webView) ?? ""
+        XCTAssertTrue(html.contains("$e^{i\\pi} = -1$"), "got: \(html)")
+        XCTAssertFalse(html.contains("katex"))
+    }
+
+    func testSelectionCopyExportsMermaidSource() {
+        let webView = loadDocument("""
+        ```mermaid
+        graph TD; A-->B;
+        ```
+        """)
+        waitUntilTrue(webView, "document.querySelectorAll('pre.mermaid svg').length >= 1")
+        let html = selectAllAndExport(webView) ?? ""
+        XCTAssertTrue(html.contains("graph TD"), "got: \(html)")
+        XCTAssertFalse(html.contains("<svg"))
+    }
+
+    func testCopyEventRewritesClipboardData() {
+        let webView = loadDocument("# Title\n\nBody text.")
+        let json = evaluate(webView, """
+        (function() {
+            var captured = null;
+            document.addEventListener('copy', function(e) {
+                captured = { prevented: e.defaultPrevented, html: e.clipboardData.getData('text/html') };
+            });
+            getSelection().selectAllChildren(document.body);
+            document.execCommand('copy');
+            return JSON.stringify(captured);
+        })()
+        """) as? String ?? ""
+        XCTAssertTrue(json.contains("\"prevented\":true"), "got: \(json)")
+        XCTAssertTrue(json.contains("<h1>"), "got: \(json)")
+    }
+
+    func testSelectionInsideTableCellExportsPlainText() {
+        let webView = loadDocument("| Alpha | Beta |\n|---|---|\n| gamma | delta |")
+        let html = evaluate(webView, """
+        (function() {
+            var td = document.querySelector('td');
+            var r = document.createRange();
+            r.selectNodeContents(td);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String ?? ""
+        XCTAssertFalse(html.contains("<table"), "got: \(html)")
+        XCTAssertTrue(html.contains("gamma"))
+    }
+
+    func testSelectionInsideListItemExportsPlainText() {
+        let webView = loadDocument("- first bullet\n- second bullet")
+        let html = evaluate(webView, """
+        (function() {
+            var li = document.querySelector('li');
+            var r = document.createRange();
+            r.selectNodeContents(li);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String ?? ""
+        XCTAssertFalse(html.contains("<li"), "got: \(html)")
+        XCTAssertTrue(html.contains("first bullet"))
+    }
+
+    func testSelectionAcrossCellsKeepsTable() {
+        let webView = loadDocument("| Alpha | Beta |\n|---|---|\n| gamma | delta |")
+        let html = evaluate(webView, """
+        (function() {
+            var r = document.createRange();
+            r.selectNodeContents(document.querySelector('tbody tr'));
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String ?? ""
+        XCTAssertTrue(html.contains("<table>"), "got: \(html)")
+        XCTAssertTrue(html.contains("<td>"))
+    }
+
+    func testCollapsedSectionExcludedFromExport() {
+        let webView = loadDocument("# One\n\nvisible text\n\n# Two\n\nhidden text")
+        let html = evaluate(webView, """
+        (function() {
+            var folds = document.querySelectorAll('.rd-fold');
+            folds[folds.length - 1].click();
+            getSelection().selectAllChildren(document.body);
+            return window.__rdCopy.htmlForSelection();
+        })()
+        """) as? String ?? ""
+        XCTAssertTrue(html.contains("visible text"), "got: \(html)")
+        XCTAssertFalse(html.contains("hidden text"), "got: \(html)")
+    }
+
+    func testCollapsedSelectionExportsNothing() {
+        let webView = loadDocument("Some text")
+        let result = evaluate(webView, """
+        (function() {
+            getSelection().removeAllRanges();
+            return window.__rdCopy.htmlForSelection() === null;
+        })()
+        """) as? Bool
+        XCTAssertEqual(result, true)
+    }
+
     func testMermaidFlowchartDynamicallyWrapsLongLabels() {
         let webView = loadDocument("""
         ```mermaid
@@ -338,10 +523,6 @@ final class FindInPageTests: XCTestCase {
 
     // MARK: - Print/PDF always renders light (Mermaid dark-on-paper fix)
 
-    /// The print/PDF path renders with the light template so paper never
-    /// inherits the dark palette. Exercises the full pipeline the fix uses —
-    /// light HTML + a real Mermaid render + `createPDF` — and checks the
-    /// resulting PDF's background is light, not the dark page colour.
     func testMermaidPrintPDFBackgroundIsLight() throws {
         let result = MarkdownRenderer.render("""
         # Diagram
@@ -376,10 +557,7 @@ final class FindInPageTests: XCTestCase {
             "print background must be light; brightness \(brightness) suggests the dark palette leaked to paper")
     }
 
-    /// Brightness (0 dark … 1 light) of a page-background pixel. The thumbnail
-    /// keeps the page's aspect ratio (avoiding transparent letterbox margins),
-    /// and we sample the top padding band, horizontally centred, which is the
-    /// body background colour, above any content.
+    /// The thumbnail keeps the page aspect ratio; letterbox margins would sample as transparent.
     private func cornerBrightness(of page: PDFPage) throws -> CGFloat {
         let bounds = page.bounds(for: .mediaBox)
         let w: CGFloat = 160
@@ -387,8 +565,7 @@ final class FindInPageTests: XCTestCase {
         let image = page.thumbnail(of: NSSize(width: w, height: h), for: .mediaBox)
         let tiff = try XCTUnwrap(image.tiffRepresentation)
         let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff))
-        // Lower-centre: empty body background, below any content and clear of
-        // the page's top edge.
+        // Lower-centre: body background, clear of content and the page edge.
         let color = try XCTUnwrap(
             rep.colorAt(x: Int(w / 2), y: Int(h * 0.7))?.usingColorSpace(.sRGB))
         return color.brightnessComponent

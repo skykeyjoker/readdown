@@ -2,9 +2,7 @@ import AppKit
 import Combine
 import Foundation
 
-/// Renders a document to HTML, re-rendering when the file changes on disk or
-/// the system appearance changes. `NSFilePresenter` tracks atomic saves
-/// (write-temp-then-rename); the initial render is synchronous to avoid a flash.
+/// `NSFilePresenter` tracks atomic saves (write-temp-then-rename); the initial render is synchronous to avoid a flash.
 final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
     /// Lets the UI show the "Updated" pill for content changes but not re-themes.
     enum ChangeSource {
@@ -15,6 +13,7 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
     @Published private(set) var html: String
     /// Raw source, kept in sync with `html` so a copy reflects what's on disk.
     @Published private(set) var text: String
+    var bodyHTML: String { lastResult.html }
     private(set) var lastChangeSource: ChangeSource = .disk
     let fileURL: URL?
 
@@ -30,6 +29,7 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
     private var appearanceObservation: NSKeyValueObservation?
     private var themeObservation: NSObjectProtocol?
     private var typographyObservation: NSObjectProtocol?
+    private var lastResult: MarkdownRenderer.Result
 
     convenience init(initialText: String, fileURL: URL?, isDark: Bool) {
         let provider: (Bool) -> ReaderThemePalette = { dark in
@@ -54,6 +54,7 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
         self.themeProvider = themeProvider
         typography = initialTypography
         self.typographyProvider = typographyProvider
+        lastResult = result
         html = HTMLTemplate.wrap(
             body: result.html,
             hasMermaid: result.hasMermaid,
@@ -126,10 +127,9 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
         }
 
         guard let decodedText = decoded else { return }
-        // Keep `text` in sync with disk even when the rendered HTML is unchanged
-        // (e.g. trailing whitespace), so Copy reflects the file, not a stale source.
         if decodedText != text { text = decodedText }
         let result = MarkdownRenderer.render(decodedText)
+        lastResult = result
         let next = HTMLTemplate.wrap(
             body: result.html,
             hasMermaid: result.hasMermaid,
@@ -161,12 +161,11 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
     private func applyTheme(_ nextPalette: ReaderThemePalette) {
         guard nextPalette != palette else { return }
         palette = nextPalette
-        let result = MarkdownRenderer.render(text)
         lastChangeSource = .appearance
         html = HTMLTemplate.wrap(
-            body: result.html,
-            hasMermaid: result.hasMermaid,
-            hasMath: result.hasMath,
+            body: lastResult.html,
+            hasMermaid: lastResult.hasMermaid,
+            hasMath: lastResult.hasMath,
             palette: nextPalette,
             typography: typography
         )
@@ -175,12 +174,11 @@ final class DocumentWatcher: NSObject, ObservableObject, NSFilePresenter {
     private func applyTypography(_ nextTypography: ReaderTypography) {
         guard nextTypography != typography else { return }
         typography = nextTypography
-        let result = MarkdownRenderer.render(text)
         lastChangeSource = .appearance
         html = HTMLTemplate.wrap(
-            body: result.html,
-            hasMermaid: result.hasMermaid,
-            hasMath: result.hasMath,
+            body: lastResult.html,
+            hasMermaid: lastResult.hasMermaid,
+            hasMath: lastResult.hasMath,
             palette: palette,
             typography: nextTypography
         )

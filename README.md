@@ -25,7 +25,7 @@
 - **Syntax highlighting** — 19 languages auto-detected, or specify the language on your code fence.
 - **Math rendering** — Inline (`$x^2$`) and display (`$$\int f\,dx$$`) TeX equations via KaTeX, fully offline.
 - **Mermaid diagrams** — Flowcharts, sequence diagrams, pie charts, and more.
-- **Dark mode** — Follows your system appearance automatically.
+- **Dark mode** — Follows your system appearance, or pick Light or Dark from the View menu.
 - **Default reader** — One click to replace Xcode or TextEdit as your .md handler.
 
 ## Quick Look Setup
@@ -51,6 +51,8 @@ Requires macOS 13 Ventura or later.
 ## Feedback
 
 Found a bug or have a feature request? [Open an issue](https://github.com/nataliarsand/readdown/issues).
+
+Want to send a fix? Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Security issues go through [SECURITY.md](SECURITY.md), not the public tracker.
 
 ## License
 
