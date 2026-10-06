@@ -13,24 +13,33 @@ enum ReaderTheme {
     /// Matches the page `--bg`, so chrome reads as one surface with the document.
     static var pageBackground: NSColor { activePalette.background.nsColor }
     static var pill: Color { activePalette.surface.color }
-    /// Matches the code-block copy button's confirmed state.
-    static var copyConfirm: Color { activePalette.green.color }
+    static var success: Color { activePalette.green.color }
+    static var successFill: Color { success.opacity(0.1) }
+    static var successBorder: Color { success.opacity(0.25) }
     static var hairline: Color { activePalette.text.color.opacity(0.08) }
+    static let hoverFill = Color.primary.opacity(0.07)
+
+    static let controlRadius: CGFloat = 8
+    static let panelRadius: CGFloat = 12
+    static var panelShape: RoundedRectangle { RoundedRectangle(cornerRadius: panelRadius, style: .continuous) }
+
+    static let appear = Animation.easeOut(duration: 0.15)
+    static let disappear = Animation.easeIn(duration: 0.2)
 
     static let headerTopPadding: CGFloat = 6
     static let headerPillHeight: CGFloat = 34
     static var headerCenterFromTop: CGFloat { headerTopPadding + headerPillHeight / 2 }
     static var headerStripHeight: CGFloat { headerTopPadding * 2 + headerPillHeight }
-    /// Clears the traffic lights.
     static let headerLeadingClearance: CGFloat = 76
     static let headerEdgePadding: CGFloat = 12
 
 }
 
 extension View {
-    func floatingSurface(_ shape: some InsettableShape, fill: some ShapeStyle) -> some View {
+    func floatingSurface(_ shape: some InsettableShape, fill: some ShapeStyle,
+                         border: Color = ReaderTheme.hairline) -> some View {
         background(fill, in: shape)
-            .overlay(shape.strokeBorder(ReaderTheme.hairline))
+            .overlay(shape.strokeBorder(border))
             .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
     }
 }
@@ -61,8 +70,9 @@ struct ContentView: View {
     @StateObject private var findState = FindState()
     @StateObject private var tableOfContentsState = TableOfContentsState()
     @State private var window: NSWindow?
-    @State private var pillText: String?
-    @State private var pillDismissWork: DispatchWorkItem?
+    @State private var toast: Toast?
+    @State private var toastDismissWork: DispatchWorkItem?
+    @StateObject private var tips = HeaderTipState()
 
     init(document: MarkdownDocument, baseURL: URL?, fileURL: URL? = nil) {
         // Appearance source of truth is `NSAppearance`; WebKit's media query is unreliable here.
@@ -98,16 +108,21 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     titlePill
                     Spacer(minLength: ReaderTheme.headerEdgePadding)
-                    if let pillText {
-                        StatusPill(text: pillText)
-                            .padding(.trailing, 8)
-                            .transition(.opacity)
-                    }
                     actionPill
                 }
                 .padding(.top, ReaderTheme.headerTopPadding)
                 .padding(.leading, ReaderTheme.headerLeadingClearance)
                 .padding(.trailing, ReaderTheme.headerEdgePadding)
+                if findState.isVisible {
+                    FindBar(state: findState)
+                        .padding(.top, ReaderTheme.headerStripHeight + 4)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if let toast {
+                    ToastView(toast: toast)
+                        .padding(.top, ReaderTheme.headerTopPadding)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
                 .ignoresSafeArea(.container, edges: .top)
                 .background(WindowAccessor { window in
@@ -115,12 +130,6 @@ struct ContentView: View {
                     WindowCascader.shared.cascade(window)
                     configureWindowChrome(window)
                 })
-
-            if findState.isVisible {
-                FindBar(state: findState)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
         }
         .font(typographyPreferences.typography.ui.swiftUIFont)
         .onReceive(NotificationCenter.default.publisher(for: .findInDocument)) { _ in
@@ -136,9 +145,14 @@ struct ContentView: View {
             guard window?.isKeyWindow == true else { return }
             copyFilePath()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .linkNotice)) { notification in
+            guard notification.object as? NSWindow == window,
+                  let text = notification.userInfo?["text"] as? String else { return }
+            showToast(Toast(text: text, kind: .info))
+        }
         .onChange(of: watcher.html) { _ in
             if watcher.lastChangeSource == .disk {
-                showPill("Updated")
+                showToast(Toast(text: "Updated", kind: .info))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerThemeDidChange)) { _ in
@@ -167,10 +181,10 @@ struct ContentView: View {
             CopyButton(text: { watcher.text },
                        html: { ClipboardExport.htmlFragment(fromRenderedBody: watcher.bodyHTML) }) {
                 UsageMetrics.record(.copyFile)
-                showPill("Full contents copied to clipboard")
+                showToast(Toast(text: "Full contents copied to clipboard", kind: .success))
             }
             PillIconButton(icon: "magnifyingglass", label: "Find in Document",
-                           action: showFindBar)
+                           shortcut: AppShortcut.find, action: showFindBar)
             PillIconButton(
                 icon: "list.bullet.indent",
                 label: tableOfContentsState.isVisible
@@ -187,6 +201,18 @@ struct ContentView: View {
         }
         .padding(4)
         .floatingSurface(Capsule(), fill: ReaderTheme.pill)
+        .environmentObject(tips)
+        .overlayPreferenceValue(HeaderTipAnchor.self) { anchor in
+            GeometryReader { proxy in
+                if let anchor, let tip = tips.shown {
+                    HeaderTipLayout(button: proxy[anchor]) {
+                        HeaderTipBubble(tip: tip)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .allowsHitTesting(false)
+        }
     }
 
     private func revealInFinder() {
@@ -201,29 +227,32 @@ struct ContentView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(fileURL.path, forType: .string)
-        showPill("Path copied to clipboard")
+        showToast(Toast(text: "Path copied to clipboard", kind: .success))
     }
 
     private func showFindBar() {
         UsageMetrics.record(.findInDocument)
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(ReaderTheme.appear) {
             findState.isVisible = true
         }
         findState.focusRequest += 1
     }
 
-    private func showPill(_ text: String) {
-        withAnimation(.easeOut(duration: 0.2)) {
-            pillText = text
+    private func showToast(_ new: Toast) {
+        withAnimation(ReaderTheme.appear) {
+            toast = new
         }
-        pillDismissWork?.cancel()
-        let work = DispatchWorkItem {
-            withAnimation(.easeIn(duration: 0.4)) {
-                pillText = nil
-            }
+        toastDismissWork?.cancel()
+        let work = DispatchWorkItem { dismissToast() }
+        toastDismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + CheckIcon.confirmSeconds, execute: work)
+    }
+
+    private func dismissToast() {
+        toastDismissWork?.cancel()
+        withAnimation(ReaderTheme.disappear) {
+            toast = nil
         }
-        pillDismissWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     /// No `NSToolbar`: on Tahoe even an empty one paints an opaque header over the pills.
@@ -312,7 +341,6 @@ struct WindowDragArea: NSViewRepresentable {
     }
 }
 
-/// Never truncates; the title pill yields instead.
 extension CheckIcon {
     struct Shape: SwiftUI.Shape {
         func path(in rect: CGRect) -> Path {
@@ -333,30 +361,96 @@ extension CheckIcon {
     }
 }
 
-private struct StatusPill: View {
+extension CopyIcon {
+    struct Shape: SwiftUI.Shape {
+        func path(in rect: CGRect) -> Path {
+            let s = rect.width / CopyIcon.grid
+            func p(_ point: CGPoint) -> CGPoint { CGPoint(x: rect.minX + point.x * s, y: rect.minY + point.y * s) }
+            var path = Path()
+            let f = CopyIcon.front
+            path.addRoundedRect(in: CGRect(origin: p(f.origin), size: CGSize(width: f.width * s, height: f.height * s)),
+                                cornerSize: CGSize(width: CopyIcon.radius * s, height: CopyIcon.radius * s))
+            let c = CopyIcon.backCorners
+            path.move(to: p(c[0]))
+            for i in 1...3 {
+                path.addArc(tangent1End: p(c[i]), tangent2End: p(c[i + 1]), radius: CopyIcon.radius * s)
+            }
+            path.addLine(to: p(c[4]))
+            return path
+        }
+    }
+
+    struct View: SwiftUI.View {
+        let size: CGFloat
+        var body: some SwiftUI.View {
+            Shape()
+                .stroke(style: StrokeStyle(lineWidth: strokeWidth * size / grid, lineCap: .round, lineJoin: .round))
+                .frame(width: size, height: size)
+        }
+    }
+}
+
+struct Toast: Equatable {
+    enum Kind {
+        case success, info
+
+        var foreground: Color {
+            switch self {
+            case .success: ReaderTheme.success
+            case .info: .primary
+            }
+        }
+
+        var fill: Color {
+            switch self {
+            case .success: ReaderTheme.successFill
+            case .info: .clear
+            }
+        }
+
+        var border: Color {
+            switch self {
+            case .success: ReaderTheme.successBorder
+            case .info: ReaderTheme.hairline
+            }
+        }
+    }
+
     let text: String
+    let kind: Kind
+}
+
+private struct ToastView: View {
+    let toast: Toast
 
     var body: some View {
-        HStack(spacing: 6) {
-            CheckIcon.View(size: 12)
-                .foregroundStyle(ReaderTheme.copyConfirm)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            switch toast.kind {
+            case .success:
+                CheckIcon.View(size: 14)
+            case .info:
+                Image(systemName: "info.circle")
+                    .font(.system(size: 15, weight: .medium))
+            }
+            Text(toast.text)
+                .font(.system(size: 14, weight: .medium))
         }
+        .foregroundStyle(toast.kind.foreground)
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .frame(height: ReaderTheme.headerPillHeight)
-        .floatingSurface(Capsule(), fill: ReaderTheme.pill)
+        .background(toast.kind.fill, in: ReaderTheme.panelShape)
+        .floatingSurface(ReaderTheme.panelShape, fill: ReaderTheme.pill, border: toast.kind.border)
         .allowsHitTesting(false)
     }
 }
 
 private struct PillIcon<Glyph: View>: View {
     private static var hitArea: CGSize { CGSize(width: 30, height: 26) }
-    private static var hoverShape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
-    private static var hoverOpacity: Double { 0.07 }
+    private static var hoverShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: ReaderTheme.controlRadius, style: .continuous)
+    }
 
     var tint: Color?
     var disabled = false
@@ -371,7 +465,7 @@ private struct PillIcon<Glyph: View>: View {
             .frame(width: Self.hitArea.width, height: Self.hitArea.height)
             .background(
                 Self.hoverShape
-                    .fill(Color.primary.opacity(hovered && !disabled ? Self.hoverOpacity : 0))
+                    .fill(hovered && !disabled ? ReaderTheme.hoverFill : .clear)
             )
             .contentShape(Self.hoverShape)
     }
@@ -379,6 +473,7 @@ private struct PillIcon<Glyph: View>: View {
 
 private struct PillIconButton<Glyph: View>: View {
     let label: String
+    var shortcut: KeyboardShortcut?
     var tint: Color?
     var disabled = false
     let action: () -> Void
@@ -392,14 +487,17 @@ private struct PillIconButton<Glyph: View>: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .onHover { hovered = $0 }
-        .help(label)
+        .headerTip(HeaderTip(label: label, shortcut: shortcut))
         .accessibilityLabel(label)
     }
 }
 
 extension PillIconButton where Glyph == Image {
-    init(icon: String, label: String, tint: Color? = nil, disabled: Bool = false, action: @escaping () -> Void) {
-        self.init(label: label, tint: tint, disabled: disabled, action: action) { Image(systemName: icon) }
+    init(icon: String, label: String, shortcut: KeyboardShortcut? = nil, tint: Color? = nil,
+         disabled: Bool = false, action: @escaping () -> Void) {
+        self.init(label: label, shortcut: shortcut, tint: tint, disabled: disabled, action: action) {
+            Image(systemName: icon)
+        }
     }
 }
 
@@ -420,12 +518,11 @@ private struct PillMenu<Items: View>: View {
         .fixedSize()
         .disabled(disabled)
         .onHover { hovered = $0 }
-        .help(label)
+        .headerTip(HeaderTip(label: label))
         .accessibilityLabel(label)
     }
 }
 
-/// Confirmation state matches the code-block copy button.
 private struct CopyButton: View {
     let text: () -> String
     var html: () -> String? = { nil }
@@ -436,13 +533,13 @@ private struct CopyButton: View {
     var body: some View {
         PillIconButton(
             label: confirmed ? "Copied" : "Copy to Clipboard",
-            tint: confirmed ? ReaderTheme.copyConfirm : nil,
+            tint: confirmed ? ReaderTheme.success : nil,
             action: copy
         ) {
             if confirmed {
                 CheckIcon.View(size: 14)
             } else {
-                Image(systemName: "square.on.square")
+                CopyIcon.View(size: 16)
             }
         }
     }
@@ -463,6 +560,160 @@ private struct CopyButton: View {
     }
 }
 
+enum AppShortcut {
+    static let find = KeyboardShortcut("f", modifiers: .command)
+}
+
+extension KeyboardShortcut {
+    var symbols: String {
+        let order: [(EventModifiers, String)] = [(.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+        return order.filter { modifiers.contains($0.0) }.map(\.1).joined() + String(key.character).uppercased()
+    }
+}
+
+struct HeaderTip: Equatable {
+    let label: String
+    var shortcut: KeyboardShortcut?
+
+    static func == (a: HeaderTip, b: HeaderTip) -> Bool {
+        a.label == b.label && a.shortcut?.symbols == b.shortcut?.symbols
+    }
+}
+
+/// Native `.help` waits about a second and can't show a shortcut.
+final class HeaderTipState: ObservableObject {
+    private static let delay: TimeInterval = 0.35
+    /// Moving to the next button soon after shows its tip at once, as AppKit does.
+    private static let warmWindow: TimeInterval = 0.5
+    private static let handoff: TimeInterval = 0.06
+
+    @Published private(set) var shown: HeaderTip?
+    private var hovered: HeaderTip?
+    private var pending: DispatchWorkItem?
+    private var lastHidden = Date.distantPast
+    private var clickMonitor: Any?
+
+    func hover(_ tip: HeaderTip, _ inside: Bool) {
+        if inside {
+            pending?.cancel()
+            hovered = tip
+            if shown != nil || Date().timeIntervalSince(lastHidden) < Self.warmWindow {
+                show(tip)
+            } else {
+                schedule(after: Self.delay) { [weak self] in self?.show(tip) }
+            }
+        } else if hovered == tip {
+            pending?.cancel()
+            hovered = nil
+            // The next button's enter follows this exit; waiting lets the tip swap without a blink.
+            schedule(after: Self.handoff) { [weak self] in self?.hide() }
+        }
+    }
+
+    private func schedule(after delay: TimeInterval, _ action: @escaping () -> Void) {
+        let work = DispatchWorkItem(block: action)
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func show(_ tip: HeaderTip) {
+        guard hovered == tip else { return }
+        if shown == nil {
+            withAnimation(ReaderTheme.appear) { shown = tip }
+        } else {
+            shown = tip
+        }
+        // A click opens a menu or changes the button; the tip would sit over it.
+        clickMonitor = clickMonitor ?? NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            self?.hovered = nil
+            self?.hide()
+            return event
+        }
+    }
+
+    private func hide() {
+        pending?.cancel()
+        guard hovered == nil else { return }
+        if shown != nil { lastHidden = Date() }
+        withAnimation(ReaderTheme.disappear) { shown = nil }
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
+    }
+
+    deinit {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+    }
+}
+
+struct HeaderTipAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+private struct HeaderTipModifier: ViewModifier {
+    let tip: HeaderTip
+    @EnvironmentObject private var tips: HeaderTipState
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { tips.hover(tip, $0) }
+            .anchorPreference(key: HeaderTipAnchor.self, value: .bounds) { tips.shown == tip ? $0 : nil }
+    }
+}
+
+extension View {
+    func headerTip(_ tip: HeaderTip) -> some View {
+        modifier(HeaderTipModifier(tip: tip))
+    }
+}
+
+/// A layout, not measured state, so a new tip is placed by its own width on its first frame.
+private struct HeaderTipLayout: Layout {
+    let button: CGRect
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let x = min(button.midX - size.width / 2, bounds.width - size.width)
+            subview.place(at: CGPoint(x: bounds.minX + x, y: bounds.maxY + HeaderTipBubble.gap),
+                          proposal: ProposedViewSize(size))
+        }
+    }
+}
+
+struct HeaderTipBubble: View {
+    static let gap: CGFloat = 8
+
+    let tip: HeaderTip
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(tip.label)
+                .font(.system(size: 13))
+            if let shortcut = tip.shortcut {
+                Text(shortcut.symbols)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(ReaderTheme.hoverFill, in: Capsule())
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.leading, 12)
+        .padding(.trailing, tip.shortcut == nil ? 12 : 6)
+        .padding(.vertical, 6)
+        .floatingSurface(Capsule(), fill: ReaderTheme.pill)
+    }
+}
+
 struct FindBar: View {
     @ObservedObject var state: FindState
     @FocusState private var searchFocused: Bool
@@ -472,7 +723,7 @@ struct FindBar: View {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
 
-            TextField("Find", text: $state.searchText)
+            TextField("Find", text: $state.searchText, prompt: Text("Find").foregroundColor(.secondary))
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .onSubmit { NotificationCenter.default.post(name: .findNext, object: nil) }
@@ -489,22 +740,28 @@ struct FindBar: View {
             }
             .buttonStyle(.borderless)
             .disabled(state.searchText.isEmpty)
+            .opacity(state.searchText.isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Previous Match")
 
             Button(action: { NotificationCenter.default.post(name: .findNext, object: nil) }) {
                 Image(systemName: "chevron.down")
             }
             .buttonStyle(.borderless)
             .disabled(state.searchText.isEmpty)
+            .opacity(state.searchText.isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Next Match")
 
             Button(action: close) {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel("Close Find")
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .floatingSurface(RoundedRectangle(cornerRadius: 10, style: .continuous), fill: .regularMaterial)
+        .foregroundStyle(.secondary)
+        .floatingSurface(ReaderTheme.panelShape, fill: ReaderTheme.pill)
         .frame(maxWidth: 380)
         .padding(.horizontal, 16)
         .onAppear(perform: focusAndSelectSearchText)
@@ -519,7 +776,7 @@ struct FindBar: View {
     }
 
     private func close() {
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(ReaderTheme.disappear) {
             state.isVisible = false
         }
         state.searchText = ""

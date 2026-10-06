@@ -55,8 +55,6 @@ final class FindInPageTests: XCTestCase {
         return (dict?["total"] as? Int ?? -1, dict?["current"] as? Int ?? -1)
     }
 
-    // MARK: - Find in document
-
     func testSearchCountsAllMatches() {
         let webView = loadDocument("alpha beta alpha\n\nAnother alpha here.")
         let counts = findCounts(webView, "search('alpha')")
@@ -220,8 +218,6 @@ final class FindInPageTests: XCTestCase {
         let svg = evaluate(webView, "document.querySelector('.rd-copy-btn').click(), document.querySelector('.rd-copy-btn').innerHTML") as? String
         XCTAssertEqual(svg, CheckIcon.svg)
     }
-
-    // MARK: - Selection copy (clean HTML flavor)
 
     private func selectAllAndExport(_ webView: WKWebView) -> String? {
         evaluate(webView, """

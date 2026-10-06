@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Opt-in, anonymous feature-usage counters. Inert until the user consents.
+/// Inert until the user consents.
 enum UsageMetrics {
 
     enum Feature: String {
@@ -14,6 +14,8 @@ enum UsageMetrics {
         case exportPDF = "export_pdf"
         case zoom = "zoom"
         case appearance = "appearance"
+        case openLinkConfirmed = "open_link"
+        case openLinkCancelled = "cancel_link"
         case documentOpened = "open_document"
         case consentGranted = "consent_granted"
     }

@@ -29,8 +29,6 @@ final class HTMLTemplateTests: XCTestCase {
         XCTAssertTrue(result.contains("task-item"))
     }
 
-    // MARK: - Theme stamp (drives Mermaid light/dark)
-
     func testStampsThemeOnBody() {
         XCTAssertTrue(HTMLTemplate.wrap(body: "", isDark: true).contains("data-rd-theme=\"dark\""))
         XCTAssertTrue(HTMLTemplate.wrap(body: "", isDark: false).contains("data-rd-theme=\"light\""))
@@ -131,15 +129,11 @@ final class HTMLTemplateTests: XCTestCase {
         XCTAssertTrue(result.contains("page-break-after: avoid"))
     }
 
-    // MARK: - Code-copy assets ship in the page
-
     func testCodeCopyAssetsPresent() {
         let result = HTMLTemplate.wrap(body: "")
         XCTAssertTrue(result.contains("rd-copy-btn"))
         XCTAssertTrue(result.contains("rd-codeblock"))
     }
-
-    // MARK: - Math (KaTeX)
 
     func testInjectsKaTeXWhenHasMath() {
         let result = HTMLTemplate.wrap(

@@ -5,28 +5,33 @@ Each version's **Highlights** block is what appears in the in-app update dialog.
 ## 1.18
 
 ### New
-- Copy the file's path from the header pill, the File menu, or ⌥⌘C, ready to paste into a terminal or editor
+- Copy the file's path from the header's folder button, the File menu, or ⌥⌘C, ready to paste into a terminal or editor
 - YAML front matter at the top of a file shows as a code block instead of being parsed as Markdown
 - Pick Light or Dark in the View menu to read in a different appearance than macOS
+- Links to other apps (codex://, vscode://, obsidian://) open after a confirmation that names the app; nothing is remembered between clicks
 
 ### Fixed
 - Long labels in Mermaid flowcharts wrap inside their box instead of being cut off
 - Highlighted code blocks no longer show a lighter band behind the text
+- ⌘ while scrolling no longer zooms the page; pinch or ⌘+ and ⌘− still zoom
 
 ### Details
 
 **New**
 
-- **Copy Path.** A new pill button next to Show in Finder copies the document's full path to the clipboard. Also in the File menu as Copy Path, with the same ⌥⌘C shortcut Finder uses. (Issue #28, thanks @troelskn.)
+- **Copy Path.** The header's folder button now opens a menu with Show in Finder and Copy Path, which copies the document's full path to the clipboard. Also in the File menu, with the same ⌥⌘C shortcut Finder uses. (Issue #28, thanks @troelskn.)
 - **Front matter.** A YAML block between `---` lines at the very top of a file (agent skills, Jekyll, Hugo, Obsidian) renders as a `yaml` code block. A `---` anywhere else is still a horizontal rule. (Issue #29, thanks @troelskn.)
 - **Appearance.** View > Appearance switches Readdown between System, Light, and Dark. The choice is remembered and applies to every window; Quick Look keeps following macOS. (Issue #32, thanks @csbertran.)
+- **Links to other apps.** A link whose scheme belongs to an app on your Mac, written as `[text](codex://…)` or `<codex://…>`, now opens that app after a confirmation naming it and showing the link. Every click asks, and nothing is remembered. If no app on the Mac handles the scheme, the header says so. Links that reach files, shares or remote hosts, run scripts or automation, or open system panes stay plain text, and Quick Look never opens anything. Bare `codex://…` text without link syntax stays text, as on GitHub. (Issue #31, thanks @justin808.)
 
 **Fixed**
 
 - Long identifiers in Mermaid flowchart nodes now wrap and the node grows to fit, instead of the text being clipped at the node's edge. (PR #27, thanks @skykeyjoker.)
 - Syntax-highlighted code sat on a slightly lighter background than its block in light mode. Both now match.
 - A code fence indented four or more spaces was dropped from the page instead of showing as text.
-- Show in Finder and Copy Path share one folder button in the header; every header button has a tooltip; the "copied" confirmation appears next to the buttons.
+- Holding ⌘ while scrolling no longer zooms the page, so reaching for a shortcut mid-scroll can't change the text size. Pinch on the trackpad, or ⌘+, ⌘− and ⌘0, still zoom and reset. (Issue #30, thanks @max-jardetzky.)
+- A link whose address starts with an invisible control character is now checked the way the browser reads it, so it can no longer slip past the link safety rules.
+- Show in Finder and Copy Path share one folder button in the header; every header button shows a tooltip with its shortcut; confirmations and notices appear centred in the header.
 
 ## 1.17
 

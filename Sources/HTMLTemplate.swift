@@ -1,6 +1,5 @@
 import Foundation
 
-/// The confirm check, drawn by the header pills and by the code-block copy button in the page.
 enum CheckIcon {
     static let grid: CGFloat = 24
     static let points: [CGPoint] = [CGPoint(x: 20, y: 6), CGPoint(x: 9, y: 17), CGPoint(x: 4, y: 12)]
@@ -10,6 +9,28 @@ enum CheckIcon {
     static var svg: String {
         let pts = points.map { "\(Int($0.x)) \(Int($0.y))" }.joined(separator: " ")
         return "<svg viewBox=\"0 0 \(Int(grid)) \(Int(grid))\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"\(strokeWidth)\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"\(pts)\"></polyline></svg>"
+    }
+}
+
+enum CopyIcon {
+    static let grid: CGFloat = 24
+    static let strokeWidth: CGFloat = 2
+    static let radius: CGFloat = 2.5
+    static let front = CGRect(x: 8, y: 8, width: 13, height: 13)
+    static let backCorners: [CGPoint] = [CGPoint(x: 16, y: 8), CGPoint(x: 16, y: 3), CGPoint(x: 3, y: 3),
+                                         CGPoint(x: 3, y: 16), CGPoint(x: 8, y: 16)]
+
+    static var svg: String {
+        let c = backCorners.map { "\(n($0.x)) \(n($0.y))" }
+        let r = n(radius)
+        let back = "M\(c[0])V\(n(backCorners[1].y + radius))A\(r) \(r) 0 0 0 \(n(backCorners[1].x - radius)) \(n(backCorners[1].y))"
+            + "H\(n(backCorners[2].x + radius))A\(r) \(r) 0 0 0 \(n(backCorners[2].x)) \(n(backCorners[2].y + radius))"
+            + "V\(n(backCorners[3].y - radius))A\(r) \(r) 0 0 0 \(n(backCorners[3].x + radius)) \(n(backCorners[3].y))H\(n(backCorners[4].x))"
+        return "<svg viewBox=\"0 0 \(Int(grid)) \(Int(grid))\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"\(n(strokeWidth))\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"\(n(front.minX))\" y=\"\(n(front.minY))\" width=\"\(n(front.width))\" height=\"\(n(front.height))\" rx=\"\(r)\"></rect><path d=\"\(back)\"></path></svg>"
+    }
+
+    private static func n(_ v: CGFloat) -> String {
+        v == v.rounded() ? String(Int(v)) : String(Double(v))
     }
 }
 
@@ -586,7 +607,7 @@ enum HTMLTemplate {
         <script>
         // Runs after highlightAll; Mermaid <pre>s have no <code> child, so `pre > code` skips them.
         (function() {
-            const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+            const COPY_ICON = '\(CopyIcon.svg)';
             const CHECK_ICON = '\(CheckIcon.svg)';
 
             function legacyCopy(text) {
@@ -1122,7 +1143,6 @@ enum HTMLTemplate {
             pieOuterStrokeColor: '\(palette.border.cssHex)',
             pieOpacity: '1'
         };
-        // Mermaid replaces the element's content with the rendered SVG.
         document.querySelectorAll('pre.mermaid').forEach(function(el) {
             el.setAttribute('data-rd-src', el.textContent);
         });

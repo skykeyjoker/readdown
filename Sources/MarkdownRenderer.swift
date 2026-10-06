@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: - Pre-compiled Regex Patterns
-
 private let fencePattern = try! NSRegularExpression(pattern: "^\\s{0,3}(`{3,}|~{3,})")
 private let headingPattern = try! NSRegularExpression(pattern: "^\\s{0,3}#{1,6}(?:\\s+|$)")
 private let ulPattern = try! NSRegularExpression(pattern: "^\\s*[-*+] ")
@@ -10,7 +8,7 @@ private let tableSepPattern = try! NSRegularExpression(pattern: "^\\s*\\|?[\\s:]
 
 private let imagePattern = try! NSRegularExpression(pattern: "!\\[([^\\]]*)\\]\\(([^()]+(?:\\([^()]*\\)[^()]*)*)\\)")
 private let linkPattern = try! NSRegularExpression(pattern: "\\[([^\\]]*)\\]\\(([^()]+(?:\\([^()]*\\)[^()]*)*)\\)")
-private let autolinkURLPattern = try! NSRegularExpression(pattern: "<(https?://[^\\s<>]+)>")
+private let autolinkURLPattern = try! NSRegularExpression(pattern: "<([A-Za-z][A-Za-z0-9+.\\-]{1,31}:[^\\s<>]*)>")
 private let autolinkEmailPattern = try! NSRegularExpression(pattern: "<([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})>")
 private let codePattern = try! NSRegularExpression(pattern: "`([^`]+)`")
 // `$` is excluded: escaped dollars belong to the math pass.
@@ -43,7 +41,8 @@ private let slugTagPattern = try! NSRegularExpression(pattern: "<[^>]+>")
 private let slugStripPattern = try! NSRegularExpression(pattern: "[^\\p{L}\\p{N}\\-_\\s]")
 private let slugSpacePattern = try! NSRegularExpression(pattern: "\\s")
 
-/// Reference-link definitions, keyed by lowercased label.
+private let c0ControlOrSpace = CharacterSet(charactersIn: Unicode.Scalar(0x00)...Unicode.Scalar(0x20))
+
 private typealias RefDefs = [String: (url: String, title: String?)]
 
 /// Allowlist: any tag or attribute not listed is escaped to text, never emitted.
@@ -243,7 +242,6 @@ enum MarkdownRenderer {
                 html.append("<p>\(inlineMarkdown(para.joined(separator: "\n"), refs: refs))</p>")
             }
 
-            // No branch may leave `i` unmoved; a stuck line hangs the app (issue #8).
             if i == iAtStart {
                 i += 1
             }
@@ -254,8 +252,6 @@ enum MarkdownRenderer {
         let hasMath = joined.contains("class=\"rd-math")
         return Result(html: joined, hasMath: hasMath, hasMermaid: hasMermaid)
     }
-
-    // MARK: - Inline Markdown
 
     private static func escapeHTMLPreservingTags(_ text: String) -> String {
         let ns = text as NSString
@@ -284,7 +280,6 @@ enum MarkdownRenderer {
         return result
     }
 
-    /// `("", false)` for comments and anything that isn't a well-formed tag.
     private static func htmlTagName(_ tag: String) -> (name: String, isClosing: Bool) {
         var s = Substring(tag)
         guard s.first == "<" else { return ("", false) }
@@ -296,7 +291,6 @@ enum MarkdownRenderer {
 
     /// Escapes, rather than drops, any tag outside the allowlist.
     private static func sanitizeHTMLTag(_ tag: String) -> String {
-        // Comments are inert.
         if tag.hasPrefix("<!--") { return tag }
         var s = Substring(tag)
         guard s.first == "<" else { return escapeHTML(tag) }
@@ -466,9 +460,6 @@ enum MarkdownRenderer {
         return s
     }
 
-    // MARK: - Reference Links & Autolinking
-
-    /// Blanks each definition line in place; labels are case-insensitive and the first definition wins.
     private static func collectReferenceDefinitions(_ lines: inout [String]) -> RefDefs {
         var refs: RefDefs = [:]
         var inFence = false
@@ -514,7 +505,6 @@ enum MarkdownRenderer {
         return (label, url, title)
     }
 
-    /// `nil` when the label is undefined or the URL unsafe; the caller keeps the literal text.
     private static func referenceAnchor(text: String, label: String, refs: RefDefs) -> String? {
         guard let def = refs[label.lowercased()] else { return nil }
         let url = sanitizedMarkdownURL(def.url)
@@ -603,9 +593,6 @@ enum MarkdownRenderer {
         }
     }
 
-    // MARK: - List Helpers
-
-    /// `.para` is raw markdown, `.block` finished HTML.
     private enum ListPiece { case para(String); case block(String) }
 
     private static func listItemIndent(_ line: String) -> Int {
@@ -771,7 +758,6 @@ enum MarkdownRenderer {
         return pieces
     }
 
-    /// `nil` for an unclosed or empty block, which the normal parser then treats as a rule.
     private static func frontMatterEnd(_ lines: [String]) -> Int? {
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return nil }
         for k in 1..<lines.count {
@@ -810,8 +796,6 @@ enum MarkdownRenderer {
         return "<pre><code\(langAttr)>\(code.joined(separator: "\n"))</code></pre>"
     }
 
-    // MARK: - Block Helpers
-
     /// Must mirror the opener tests in `parseDisplayMath`, so the paragraph collector releases exactly the lines it will claim.
     private static func isDisplayMathOpener(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -824,7 +808,7 @@ enum MarkdownRenderer {
         return rest.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// `""` for an empty block; `nil` with `i` untouched when the line doesn't open display math. An unterminated block consumes to EOF.
+    /// An unterminated block consumes to EOF.
     private static func parseDisplayMath(_ i: inout Int, lines: [String]) -> String? {
         let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
         let isDollar = trimmed.hasPrefix("$$")
@@ -875,16 +859,12 @@ enum MarkdownRenderer {
             && unique.first.map { "-*_".contains($0) } == true
     }
 
-    // MARK: - Table Helpers
-
     private static func parseTableRow(_ line: String) -> [String] {
         var row = line.trimmingCharacters(in: .whitespaces)
         if row.hasPrefix("|") { row = String(row.dropFirst()) }
         if row.hasSuffix("|") { row = String(row.dropLast()) }
         return row.components(separatedBy: "|")
     }
-
-    // MARK: - Helpers
 
     static func escapeHTML(_ string: String) -> String {
         string
@@ -968,36 +948,24 @@ enum MarkdownRenderer {
     }
 
     private static func isSafeURL(_ url: String) -> Bool {
-        // Browsers strip tab/newline/CR before parsing, so `jav\tascript:` navigates as `javascript:`.
-        var trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.contains(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" }) {
-            trimmed.removeAll(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" })
-        }
-        let lowercased = trimmed.lowercased()
-        if trimmed.isEmpty || lowercased.hasPrefix("//") {
+        // Mirrors the WHATWG URL parser: `\u{01}javascript:` and `jav\tascript:` both navigate as `javascript:`.
+        var trimmed = url.trimmingCharacters(in: c0ControlOrSpace.union(.whitespacesAndNewlines))
+        trimmed.removeAll(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" })
+        if trimmed.isEmpty || trimmed.hasPrefix("//") {
             return false
         }
-        if lowercased.hasPrefix("#") || lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://") || lowercased.hasPrefix("mailto:") {
+        switch LinkScheme.kind(of: trimmed) {
+        case .denied:
+            return false
+        case .web, .custom:
             return true
-        }
-
-        if let components = URLComponents(string: trimmed),
-           let scheme = components.scheme?.lowercased(),
-           !scheme.isEmpty {
-            if ["http", "https", "mailto"].contains(scheme) {
-                return true
-            }
-            return false
-        }
-
-        if let colonIndex = trimmed.firstIndex(of: ":") {
-            let beforeColon = trimmed[..<colonIndex]
-            if beforeColon.count == 1 || beforeColon.allSatisfy({ $0.isLetter }) {
+        case .relative:
+            // `C:\…` is a drive letter, never a relative path.
+            if let colonIndex = trimmed.firstIndex(of: ":"), trimmed[..<colonIndex].count == 1 {
                 return false
             }
+            return true
         }
-
-        return true
     }
 
     /// `data:image/…` is safe only as an `<img>` source (rendered statically, CSP allows `img-src data:`); a `data:` href stays blocked.
@@ -1031,8 +999,6 @@ enum MarkdownRenderer {
         return count == 0 ? slug : "\(slug)-\(count)"
     }
 }
-
-// MARK: - String Regex Helpers
 
 private extension String {
     func matchesPattern(_ regex: NSRegularExpression) -> Bool {

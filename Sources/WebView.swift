@@ -15,20 +15,13 @@ extension Notification.Name {
     static let findNext = Notification.Name("findNext")
     static let findPrevious = Notification.Name("findPrevious")
     static let toggleTableOfContents = Notification.Name("toggleTableOfContents")
+    static let linkNotice = Notification.Name("linkNotice")
 }
 
 /// `pageZoom`, not `setMagnification`: WebKit clamps magnification at 1.0, so it can't zoom out.
 final class ZoomableWebView: WKWebView {
     static let minZoom: CGFloat = 0.5
     static let maxZoom: CGFloat = 3.0
-
-    override func scrollWheel(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
-            applyZoomDelta(event.scrollingDeltaY * 0.01)
-            return
-        }
-        super.scrollWheel(with: event)
-    }
 
     override func magnify(with event: NSEvent) {
         applyZoomDelta(event.magnification)
@@ -65,7 +58,7 @@ struct WebView: NSViewRepresentable {
 
         let webView = ZoomableWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        // Pinch goes through ZoomableWebView so it shares the Cmd-scroll range.
+        // Pinch goes through ZoomableWebView so it shares the ⌘+/− range.
         webView.allowsMagnification = false
         webView.loadHTMLString(watcher.html, baseURL: baseURL)
         context.coordinator.webView = webView
@@ -395,30 +388,75 @@ struct WebView: NSViewRepresentable {
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url {
-                switch Coordinator.linkDecision(for: url, page: webView.url) {
-                case .allowInWebView:
-                    decisionHandler(.allow)
-                case .openExternally:
-                    NSWorkspace.shared.open(url)
-                    decisionHandler(.cancel)
-                case .revealInFinder:
-                    LocalLinkOpener.revealInFinder(url)
-                    decisionHandler(.cancel)
-                case .ignore:
-                    decisionHandler(.cancel)
-                }
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.cancel)
                 return
             }
-            decisionHandler(.allow)
+            // Anything that isn't a click is our own `loadHTMLString`; it never leaves the document.
+            if navigationAction.navigationType != .linkActivated {
+                decisionHandler(Coordinator.isOwnLoad(url) ? .allow : .cancel)
+                return
+            }
+            switch Coordinator.linkDecision(for: url, page: webView.url) {
+            case .allowInWebView:
+                decisionHandler(.allow)
+            case .openExternally:
+                NSWorkspace.shared.open(url)
+                decisionHandler(.cancel)
+            case .revealInFinder:
+                LocalLinkOpener.revealInFinder(url)
+                decisionHandler(.cancel)
+            case .askBeforeOpening:
+                decisionHandler(.cancel)
+                askToOpen(url)
+            case .ignore:
+                decisionHandler(.cancel)
+            }
+        }
+
+        static func isOwnLoad(_ url: URL) -> Bool {
+            url.isFileURL || url.scheme == "about"
         }
 
         enum LinkDecision: Equatable {
             case allowInWebView   // same-document `#fragment`
             case openExternally   // http/https/mailto
             case revealInFinder   // file:// text/markdown
-            case ignore           // unknown scheme, or a local file that isn't a document
+            case askBeforeOpening // any other scheme: confirmed on every click, never remembered
+            case ignore           // denied scheme, or a local file that isn't a document
+        }
+
+        /// The app name comes from Launch Services, never from the document.
+        private func askToOpen(_ url: URL) {
+            guard let window = webView?.window, let scheme = url.scheme else { return }
+            guard let appURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+                NotificationCenter.default.post(name: .linkNotice, object: window,
+                                                userInfo: ["text": "No app on this Mac opens \(scheme) links"])
+                return
+            }
+            var appName = FileManager.default.displayName(atPath: appURL.path)
+            if appName.hasSuffix(".app") { appName.removeLast(4) }
+
+            let alert = NSAlert()
+            alert.messageText = "Open this link in \(appName)?"
+            alert.informativeText = Self.middleTruncated(url.absoluteString, limit: 120)
+            alert.addButton(withTitle: "Open")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { response in
+                guard response == .alertFirstButtonReturn else {
+                    UsageMetrics.record(.openLinkCancelled)
+                    return
+                }
+                UsageMetrics.record(.openLinkConfirmed)
+                NSWorkspace.shared.open(url)
+            }
+        }
+
+        static func middleTruncated(_ text: String, limit: Int) -> String {
+            guard text.count > limit else { return text }
+            let head = limit / 2
+            let tail = limit - head - 1
+            return text.prefix(head) + "…" + text.suffix(tail)
         }
 
         static func linkDecision(for url: URL, page: URL?) -> LinkDecision {
@@ -430,7 +468,14 @@ struct WebView: NSViewRepresentable {
             if url.isFileURL {
                 return isOpenableLocalDocument(url) ? .revealInFinder : .ignore
             }
-            return isAllowedExternalURL(url) ? .openExternally : .ignore
+            switch LinkScheme.kind(of: url.absoluteString) {
+            case .web:
+                return .openExternally
+            case .custom:
+                return .askBeforeOpening
+            case .denied, .relative:
+                return .ignore
+            }
         }
 
         /// `loadHTMLString` reports `about:blank` with no baseURL, and a directory
@@ -449,19 +494,6 @@ struct WebView: NSViewRepresentable {
                 || clickPath == pagePath + "/"
         }
 
-        private static func isAllowedExternalURL(_ url: URL) -> Bool {
-            guard let scheme = url.scheme?.lowercased() else {
-                return false
-            }
-
-            switch scheme {
-            case "http", "https", "mailto":
-                return true
-            default:
-                return false
-            }
-        }
-
         /// The document types Readdown itself opens; never executables or bundles.
         private static let openableLocalExtensions: Set<String> = [
             "md", "markdown", "mdown", "mkd", "mdwn", "mdtxt", "mdtext",
@@ -474,7 +506,6 @@ struct WebView: NSViewRepresentable {
     }
 }
 
-/// Offscreen light-themed render for print/PDF; calls back once Mermaid has laid out.
 private final class PrintRenderer: NSObject, WKNavigationDelegate {
     private let webView: WKWebView
     private let hasMermaid: Bool
